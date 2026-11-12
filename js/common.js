@@ -1,0 +1,68 @@
+const D={
+'nav.features':['Features','सुविधाएँ'],'nav.about':['About','हमारे बारे में'],'nav.login':['Log in','लॉग इन'],'nav.signup':['Sign up','साइन अप'],
+'theme.dark':['Dark','डार्क'],'theme.light':['Light','लाइट'],
+'hero.title':['Prepare for government exams with PYQs, mock papers and interview practice.','PYQ, मॉडल पेपर और इंटरव्यू प्रैक्टिस के साथ सरकारी परीक्षा की तैयारी करें।'],
+'hero.sub':['Career Sarthii is built for SSC, Railway, Banking, Defence, Police and UPSC aspirants. Choose your exam once and practise in Hindi or English.','Career Sarthii SSC, रेलवे, बैंकिंग, डिफेंस, पुलिस और UPSC की तैयारी करने वालों के लिए बन रहा है। अपनी परीक्षा एक बार चुनें और हिंदी या अंग्रेज़ी में अभ्यास करें।'],
+'hero.cta1':['Create account','खाता बनाएँ'],'hero.cta2':['Read our mission','हमारा मिशन पढ़ें'],
+'feat.title':['What you get','आपको क्या मिलेगा'],
+'f.chat.t':['AI chat','AI चैट'],'f.chat.d':['Ask doubts and get study guidance for the exam you selected.','अपने चुने हुए एग्ज़ाम के लिए डाउट पूछें और पढ़ाई का मार्गदर्शन पाएँ।'],
+'f.pyq.t':['Previous year papers','पिछले वर्षों के पेपर'],'f.pyq.d':['Attempt exam wise and year wise papers. A timer runs on every question, and wrong answers come with an AI explanation.','परीक्षा और वर्ष के अनुसार पेपर हल करें। हर प्रश्न पर टाइमर चलता है और गलत उत्तर पर AI व्याख्या मिलती है।'],
+'f.model.t':['AI model paper','AI मॉडल पेपर'],'f.model.d':['A full 3 hour paper generated in the pattern of previous years.','पिछले वर्षों के पैटर्न पर बना पूरा 3 घंटे का पेपर।'],
+'f.chapter.t':['Chapter wise questions','चैप्टर वाइज़ प्रश्न'],'f.chapter.d':['Subject wise and chapter wise practice for your exam.','आपकी परीक्षा के लिए विषय और चैप्टर के अनुसार अभ्यास।'],
+'f.interview.t':['Interview simulator','इंटरव्यू सिमुलेटर'],'f.interview.d':['Practise in Hindi or English for exams that have an interview round.','जिन परीक्षाओं में इंटरव्यू होता है, उनके लिए हिंदी या अंग्रेज़ी में अभ्यास करें।'],
+'f.notify.t':['Exam notifications','परीक्षा की सूचनाएँ'],'f.notify.d':['Notification, form and result alerts with links to the official website.','अधिसूचना, फ़ॉर्म और रिज़ल्ट के अलर्ट, आधिकारिक वेबसाइट के लिंक के साथ।'],
+'f.analysis.t':['Performance analysis','प्रदर्शन विश्लेषण'],'f.analysis.d':['Accuracy, time per question and weak chapters across every feature.','हर सुविधा में सटीकता, प्रति प्रश्न समय और कमज़ोर चैप्टर।'],
+'how.title':['How it works','यह कैसे काम करता है'],
+'how.1t':['Create your profile','प्रोफ़ाइल बनाएँ'],'how.1d':['Enter your category and qualification. Exams matching your qualification are listed for you.','अपनी श्रेणी और योग्यता भरें। योग्यता के अनुसार परीक्षाओं की सूची खुल जाएगी।'],
+'how.2t':['Choose your exam','अपनी परीक्षा चुनें'],'how.2d':['Tell Career Sarthii which exam you are preparing for. Every section then follows that exam.','बताएँ कि आप किस परीक्षा की तैयारी कर रहे हैं। हर सेक्शन उसी परीक्षा के अनुसार दिखेगा।'],
+'how.3t':['Practise and review','अभ्यास करें और समीक्षा करें'],'how.3d':['Attempt papers, practise chapters, rehearse interviews, then read your analysis.','पेपर हल करें, चैप्टर प्रैक्टिस करें, इंटरव्यू की तैयारी करें, फिर अपना विश्लेषण देखें।'],
+'mission.t':['Our mission','हमारा मिशन'],'mission.d':['Our mission is to give students who cannot afford costly coaching an affordable place to access advanced preparation resources.','हमारा मिशन है कि जो विद्यार्थी पैसों की कमी के कारण शिक्षा तक नहीं पहुँच पा रहे, उन्हें एक किफ़ायती जगह पर सभी उन्नत संसाधन उपलब्ध कराए जाएँ।'],
+'vision.t':['Our vision','हमारा विज़न'],'vision.d':['A country where no aspirant gives up a government job dream because of money.','ऐसा देश जहाँ पैसों की वजह से कोई भी अभ्यर्थी सरकारी नौकरी का अपना सपना न छोड़े।'],
+'cta.t':['Create your profile and pick your exam','प्रोफ़ाइल बनाएँ और अपनी परीक्षा चुनें'],
+'foot.privacy':['Privacy Policy','गोपनीयता नीति'],'foot.terms':['Terms and Conditions','नियम और शर्तें'],'foot.rights':['All rights reserved.','सर्वाधिकार सुरक्षित।'],
+'about.title':['About Career Sarthii','Career Sarthii के बारे में'],'about.p':['Career Sarthii is a preparation platform for government job aspirants. It covers exams from 10th pass level to graduate level and works in Hindi and English.','Career Sarthii सरकारी नौकरी की तैयारी करने वालों के लिए एक प्लेटफ़ॉर्म है। इसमें 10वीं पास से स्नातक स्तर तक की परीक्षाएँ हैं और यह हिंदी व अंग्रेज़ी दोनों में काम करता है।'],
+'auth.login':['Log in','लॉग इन'],'auth.signup':['Create your account','अपना खाता बनाएँ'],
+'f.name':['Full name','पूरा नाम'],'f.gender':['Gender','लिंग'],'g.male':['Male','पुरुष'],'g.female':['Female','महिला'],'g.other':['Other','अन्य'],
+'f.email':['Email','ईमेल'],'f.pass':['Password','पासवर्ड'],'f.category':['Category','श्रेणी'],'c.gen':['General','सामान्य'],'c.other':['Other','अन्य'],
+'f.qual':['Qualification','योग्यता'],'q.10':['10th pass','10वीं पास'],'q.12':['12th pass','12वीं पास'],'q.grad':['Graduate','स्नातक'],
+'f.select':['Select','चुनें'],'f.exam':['Exam you are preparing for','जिस परीक्षा की तैयारी कर रहे हैं'],'f.examhint':['Choose your qualification first to see eligible exams.','पात्र परीक्षाएँ देखने के लिए पहले योग्यता चुनें।'],
+'auth.have':['Already have an account?','पहले से खाता है?'],'auth.new':['New here?','नए हैं?'],
+'auth.demo':['Frontend preview: your data is saved only in this browser.','फ्रंटएंड प्रीव्यू: आपका डेटा सिर्फ़ इसी ब्राउज़र में सेव होता है।'],
+'auth.nouser':['No account found with this email.','इस ईमेल से कोई खाता नहीं मिला।'],'auth.badpass':['Incorrect password.','पासवर्ड गलत है।'],'auth.fill':['Fill in all fields.','सभी फ़ील्ड भरें।'],'auth.exists':['An account with this email already exists. Log in instead.','इस ईमेल से खाता पहले से है। लॉग इन करें।'],
+'auth.agree':['I agree to the Terms and Conditions and the Privacy Policy.','मैं नियम व शर्तों और गोपनीयता नीति से सहमत हूँ।'],'auth.agreeerr':['Accept the terms to continue.','आगे बढ़ने के लिए शर्तें स्वीकार करें।'],
+'app.dashboard':['Dashboard','डैशबोर्ड'],'app.chat':['AI chat','AI चैट'],'app.pyq':['PYQ','PYQ'],'app.model':['Model paper','मॉडल पेपर'],'app.chapters':['Chapter wise','चैप्टर वाइज़'],'app.interview':['Interview','इंटरव्यू'],'app.notices':['Notifications','सूचनाएँ'],'app.analysis':['Analysis','विश्लेषण'],
+'app.logout':['Log out','लॉग आउट'],'app.exam':['Exam','परीक्षा'],'app.preview':['Sample question bank included. Upload official papers in Study documents; Gemini AI features need a configured API key.','सैंपल प्रश्न उपलब्ध हैं। आधिकारिक पेपर Study documents में अपलोड करें; Gemini AI के लिए API key चाहिए।'],
+'dash.hello':['Hello','नमस्ते'],'dash.open':['Open','खोलें'],'dash.attempted':['Questions attempted','हल किए गए प्रश्न'],
+'q.of':['of','में से'],'q.next':['Next','अगला'],'q.finish':['Finish','समाप्त करें'],'q.correct':['Correct','सही'],'q.wrong':['Incorrect. Correct answer:','गलत। सही उत्तर:'],'q.exp':['AI explanation','AI व्याख्या'],
+'q.score':['Score','स्कोर'],'q.acc':['Accuracy','सटीकता'],'q.avg':['Average time per question','प्रति प्रश्न औसत समय'],'q.again':['Start again','फिर से शुरू करें'],'q.year':['Year','वर्ष'],'q.start':['Start','शुरू करें'],
+'q.sample':['Sample set: the same demo questions appear for every year until real PYQ data is connected.','सैंपल सेट: असली PYQ डेटा जुड़ने तक हर वर्ष के लिए यही डेमो प्रश्न दिखेंगे।'],
+'pyq.t':['Previous year questions','पिछले वर्षों के प्रश्न'],'pyq.d':['Pick a year to begin. The timer starts as soon as a question opens.','शुरू करने के लिए वर्ष चुनें। प्रश्न खुलते ही टाइमर शुरू हो जाएगा।'],
+'model.t':['AI model paper','AI मॉडल पेपर'],'model.d':['A paper in the pattern of previous years. You get 3 hours to attempt it.','पिछले वर्षों के पैटर्न का पेपर। हल करने के लिए 3 घंटे मिलेंगे।'],
+'model.gen':['Generate model paper','मॉडल पेपर बनाएँ'],'model.busy':['Generating paper...','पेपर बन रहा है...'],'model.submit':['Submit paper','पेपर जमा करें'],'model.left':['Time left','बचा हुआ समय'],'model.clear':['Clear answer','उत्तर हटाएँ'],'model.confirm':['Submit the paper now?','क्या पेपर अभी जमा करें?'],'model.review':['Review','समीक्षा'],'model.skipped':['Not answered','हल नहीं किया'],
+'chap.t':['Chapter wise questions','चैप्टर वाइज़ प्रश्न'],'chap.soon':['Questions for this chapter will be added.','इस चैप्टर के प्रश्न जोड़े जाएँगे।'],'chap.n':['questions','प्रश्न'],'back':['Back','वापस'],
+'chat.t':['AI chat','AI चैट'],'chat.ph':['Ask a doubt or ask for a study plan','डाउट या स्टडी प्लान पूछें'],'chat.send':['Send','भेजें'],
+'chat.s1':['Make a 30 day plan for my exam','मेरी परीक्षा के लिए 30 दिन का प्लान बनाओ'],'chat.s2':['Share shortcuts for percentage','प्रतिशत के शॉर्टकट बताओ'],'chat.s3':['What should I study first?','मुझे सबसे पहले क्या पढ़ना चाहिए?'],
+'chat.hello':['Hello. I will guide your preparation for','नमस्ते। मैं इसकी तैयारी में आपका मार्गदर्शन करूँगा:'],
+'chat.stub':['AI is not connected yet. This is the frontend preview, so this message is not answered. Replies will come from the AI model once the backend is added.','AI अभी जुड़ा नहीं है। यह फ्रंटएंड प्रीव्यू है, इसलिए इस संदेश का उत्तर नहीं मिलेगा। बैकएंड जुड़ने पर AI मॉडल से उत्तर आएँगे।'],
+'int.t':['Interview simulator','इंटरव्यू सिमुलेटर'],'int.none':['This exam has no interview round, so there is nothing to simulate.','इस परीक्षा में इंटरव्यू नहीं होता, इसलिए सिमुलेशन की ज़रूरत नहीं है।'],
+'int.d':['Practise the interview round of your exam. Answer in your own words.','अपनी परीक्षा के इंटरव्यू राउंड का अभ्यास करें। अपने शब्दों में उत्तर दें।'],
+'int.lang':['Interview language','इंटरव्यू की भाषा'],'int.start':['Start interview','इंटरव्यू शुरू करें'],'int.ans':['Type your answer','अपना उत्तर लिखें'],'int.speak':['Read question aloud','प्रश्न सुनें'],'int.next':['Next question','अगला प्रश्न'],'int.end':['End interview','इंटरव्यू समाप्त करें'],
+'int.sum':['Your answers','आपके उत्तर'],'int.words':['words','शब्द'],'int.fb':['AI feedback on content, fluency and confidence will appear here once the backend is connected.','कंटेंट, प्रवाह और आत्मविश्वास पर AI फ़ीडबैक बैकएंड जुड़ने के बाद यहाँ दिखेगा।'],
+'notice.t':['Exam notifications','परीक्षा की सूचनाएँ'],'notice.d':['Alerts for notification, form and result, with links to the official website. Automatic AI alerts start once the backend is connected.','अधिसूचना, फ़ॉर्म और रिज़ल्ट के अलर्ट, आधिकारिक वेबसाइट के लिंक के साथ। बैकएंड जुड़ने के बाद AI अलर्ट अपने आप आएँगे।'],
+'n.notif':['Notification','अधिसूचना'],'n.form':['Form','फ़ॉर्म'],'n.result':['Result','रिज़ल्ट'],'notice.official':['Open official website','आधिकारिक वेबसाइट खोलें'],'notice.prefs':['Alert me for','मुझे इनके अलर्ट चाहिए'],'notice.note':['Always verify dates on the official website.','तारीखें हमेशा आधिकारिक वेबसाइट पर जाँच लें।'],
+'an.t':['Analysis','विश्लेषण'],'an.empty':['Attempt some questions and your analysis will appear here.','कुछ प्रश्न हल करें, आपका विश्लेषण यहाँ दिखेगा।'],'an.by':['By subject','विषय के अनुसार'],'an.weak':['Chapters to revise','दोहराने वाले चैप्टर'],'an.slow':['Slowest questions','सबसे ज़्यादा समय वाले प्रश्न'],'an.int':['Interview sessions','इंटरव्यू सेशन'],'an.ai':['AI written analysis will be added once the backend is connected.','AI द्वारा लिखा विश्लेषण बैकएंड जुड़ने के बाद जोड़ा जाएगा।'],'sec':['sec','सेकंड'],
+'prof.exam':['Exam','परीक्षा'],'prof.cat':['Category','श्रेणी'],'prof.qual':['Qualification','योग्यता']
+};
+const store={get(k,d){try{const v=JSON.parse(localStorage.getItem(k));return v==null?d:v}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
+let lang=store.get('cs_lang','en');
+const t=k=>{const e=D[k];return e?e[lang==='hi'?1:0]:k};
+const L=o=>o&&typeof o==='object'?(o[lang]||o.en):o;
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function updTheme(){const b=document.getElementById('themeBtn');if(b)b.textContent=document.documentElement.dataset.theme==='dark'?t('theme.light'):t('theme.dark')}
+function applyLang(){document.documentElement.lang=lang;document.querySelectorAll('[data-i18n]').forEach(e=>e.textContent=t(e.dataset.i18n));document.querySelectorAll('[data-i18n-ph]').forEach(e=>e.placeholder=t(e.dataset.i18nPh));const b=document.getElementById('langBtn');if(b)b.textContent=lang==='en'?'हिंदी':'English';updTheme();document.dispatchEvent(new Event('langchange'))}
+document.addEventListener('DOMContentLoaded',()=>{
+ const lb=document.getElementById('langBtn'),tb=document.getElementById('themeBtn');
+ if(lb)lb.onclick=()=>{lang=lang==='en'?'hi':'en';store.set('cs_lang',lang);applyLang()};
+ if(tb)tb.onclick=()=>{const m=document.documentElement.dataset.theme==='dark'?'light':'dark';document.documentElement.dataset.theme=m;store.set('cs_theme',m);updTheme();document.dispatchEvent(new Event('themechange'))};
+ applyLang();
+});

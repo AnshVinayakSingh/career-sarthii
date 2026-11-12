@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard | Career Sarthii</title>
+<meta name="robots" content="noindex">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Hind:wght@400;500;600&family=Noto+Serif+Devanagari:wght@500;600&family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&display=swap" rel="stylesheet">
+<script>(function(){try{var m=JSON.parse(localStorage.getItem('cs_theme'));if(!m)m=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.dataset.theme=m}catch(e){document.documentElement.dataset.theme='light'}})()</script>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app">
+<aside class="side" id="side">
+<a class="brand" href="index.html"><img src="favicon.svg" alt="" width="28" height="28"><span>Career Sarthii</span></a>
+<a class="nl" href="#dashboard" data-i18n="app.dashboard">Dashboard</a>
+<a class="nl" href="#chat" data-i18n="app.chat">AI chat</a>
+<a class="nl" href="#pyq" data-i18n="app.pyq">PYQ</a>
+<a class="nl" href="#model" data-i18n="app.model">Model paper</a>
+<a class="nl" href="#chapters" data-i18n="app.chapters">Chapter wise</a>
+<a class="nl" href="#interview" data-i18n="app.interview">Interview</a>
+<a class="nl" href="#notices" data-i18n="app.notices">Notifications</a>
+<a class="nl" href="#documents">Study documents</a>
+<a class="nl" href="#analysis" data-i18n="app.analysis">Analysis</a>
+<div class="bot"><a href="privacy.html" style="font-size:14px;color:var(--muted)" data-i18n="foot.privacy">Privacy Policy</a><a href="terms.html" style="font-size:14px;color:var(--muted)" data-i18n="foot.terms">Terms and Conditions</a></div>
+</aside>
+<main class="main">
+<div class="topbar">
+<label for="examSel" data-i18n="app.exam">Exam</label><select id="examSel"></select>
+<div class="sp"><button class="tbtn" id="langBtn" type="button" aria-label="Language">हिंदी</button><button class="tbtn" id="themeBtn" type="button" aria-label="Theme">Dark</button><button class="btn ghost sm" id="logout" type="button" data-i18n="app.logout">Log out</button></div>
+</div>
+<div class="notice" style="margin-bottom:24px" data-i18n="app.preview"></div>
+<div id="view"></div>
+</main>
+</div>
+<script src="js/common.js"></script><script src="js/data.js"></script><script src="js/bootstrap.js"></script>
+</body></html>
