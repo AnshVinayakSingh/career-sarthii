@@ -30,32 +30,38 @@ let client,db,users,attempts,chats,documents,interviews;
 async function sessionUser(req){const value=(req.headers.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith(cookieName+'='));if(!value)return null;const data=jwtVerify(decodeURIComponent(value.slice(cookieName.length+1)));if(!data||!ObjectId.isValid(data.sub))return null;return users.findOne({_id:new ObjectId(data.sub)});}
 async function requireUser(req,res){const u=await sessionUser(req);if(!u)send(res,401,{error:'Please log in again.'});return u;}
 async function createSession(userId,res){res.setHeader('Set-Cookie',cookie(jwtSign({sub:String(userId)})));}
-const isG3 = /gemini-3/.test(GEMINI_MODEL);
 const THINK = process.env.GEMINI_THINKING || 'low';
-function gBody(contents, config = {}, system) { const generationConfig = { ...config }; delete generationConfig.temperature; if (isG3) generationConfig.thinkingConfig = { thinkingLevel: THINK }; const body = { contents, generationConfig }; if (system) body.systemInstruction = { parts: [{ text: system }] }; return JSON.stringify(body); }
+const MODELS = [GEMINI_MODEL, ...(process.env.GEMINI_FALLBACK_MODELS || 'gemini-3.6-flash,gemini-3.7-flash').split(',').map(x => x.trim())].filter((m, i, arr) => m && arr.indexOf(m) === i);
+const RETRY = [404, 429, 500, 502, 503, 504];
+function gBody(model, contents, config = {}, system) { const generationConfig = { ...config }; delete generationConfig.temperature; if (/gemini-3/.test(model)) generationConfig.thinkingConfig = { thinkingLevel: THINK }; const body = { contents, generationConfig }; if (system) body.systemInstruction = { parts: [{ text: system }] }; return JSON.stringify(body); }
 const GBASE = process.env.GEMINI_BASE || 'https://generativelanguage.googleapis.com';
-const gUrl = (stream) => `${GBASE}/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:${stream ? 'streamGenerateContent?alt=sse' : 'generateContent'}`;
+const gUrl = (model, stream) => `${GBASE}/v1beta/models/${encodeURIComponent(model)}:${stream ? 'streamGenerateContent?alt=sse' : 'generateContent'}`;
 const gHeaders = { 'content-type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY };
 const gText = p => (p.candidates?.[0]?.content?.parts || []).filter(x => !x.thought).map(x => x.text || '').join('');
 async function gemini(contents, config = {}, system) {
-  if (!GEMINI_API_KEY) return null;
-  for (let attempt = 0; ; attempt++) {
-    const response = await fetch(gUrl(false), { method: 'POST', headers: gHeaders, body: gBody(contents, config, system), signal: AbortSignal.timeout(60000) });
+  if (!GEMINI_API_KEY) return null; let lastErr;
+  for (const model of MODELS) {
+    const response = await fetch(gUrl(model, false), { method: 'POST', headers: gHeaders, body: gBody(model, contents, config, system), signal: AbortSignal.timeout(60000) }).catch(e => ({ ok: false, status: 0, json: async () => ({ error: { message: e.message } }) }));
     const payload = await response.json().catch(() => ({}));
-    if (response.ok) return gText(payload).trim();
-    if (attempt < 1 && [429, 500, 503].includes(response.status)) { await new Promise(r => setTimeout(r, 800)); continue; }
-    throw new Error(payload.error?.message || `Gemini returned ${response.status}`);
+    if (response.ok) { const t = gText(payload).trim(); if (t) return t; lastErr = new Error('Empty answer'); continue; }
+    lastErr = new Error(payload.error?.message || `Gemini returned ${response.status}`);
+    if (!RETRY.includes(response.status) && response.status !== 0) throw lastErr;
   }
+  throw lastErr;
 }
 async function geminiStream(contents, config, system, onText) {
-  const r = await fetch(gUrl(true), { method: 'POST', headers: gHeaders, body: gBody(contents, config, system), signal: AbortSignal.timeout(90000) });
-  if (!r.ok) { const p = await r.json().catch(() => ({})); throw new Error(p.error?.message || `Gemini returned ${r.status}`); }
-  const reader = r.body.getReader(), dec = new TextDecoder(); let buf = '', full = '';
-  for (;;) {
-    const { done, value } = await reader.read(); if (done) break; buf += dec.decode(value, { stream: true }); let i;
-    while ((i = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (!line.startsWith('data:')) continue; const j = line.slice(5).trim(); if (!j || j === '[DONE]') continue; try { const t = gText(JSON.parse(j)); if (t) { full += t; onText(t); } } catch {} }
+  let lastErr;
+  for (const model of MODELS) {
+    let r; try { r = await fetch(gUrl(model, true), { method: 'POST', headers: gHeaders, body: gBody(model, contents, config, system), signal: AbortSignal.timeout(90000) }); } catch (e) { lastErr = e; continue; }
+    if (!r.ok) { const p = await r.json().catch(() => ({})); lastErr = new Error(p.error?.message || `Gemini returned ${r.status}`); if (RETRY.includes(r.status)) continue; throw lastErr; }
+    const reader = r.body.getReader(), dec = new TextDecoder(); let buf = '', full = '';
+    for (;;) {
+      const { done, value } = await reader.read(); if (done) break; buf += dec.decode(value, { stream: true }); let i;
+      while ((i = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (!line.startsWith('data:')) continue; const j = line.slice(5).trim(); if (!j || j === '[DONE]') continue; try { const t = gText(JSON.parse(j)); if (t) { full += t; onText(t); } } catch {} }
+    }
+    if (full) return full; lastErr = new Error('Empty answer');
   }
-  return full;
+  throw lastErr;
 }
 const localFeedback = (answers, lg) => answers.map((a, i) => { const w = String(a.a || '').split(/\s+/).filter(Boolean).length; const tips = []; if (w < 20) tips.push(lg === 'hi' ? 'उत्तर बहुत छोटा है, कम से कम 3 से 4 वाक्य बोलें।' : 'Answer is very short; aim for at least 3 to 4 sentences.'); else if (w > 150) tips.push(lg === 'hi' ? 'उत्तर लंबा है, मुख्य बिंदुओं पर टिके रहें।' : 'Answer is long; keep to the main points.'); if (!/\d|for example|such as|उदाहरण|जैसे/i.test(a.a || '')) tips.push(lg === 'hi' ? 'एक उदाहरण या तथ्य जोड़ें।' : 'Add one specific example or fact.'); if (!tips.length) tips.push(lg === 'hi' ? 'उत्तर संतुलित है। अंत में एक संक्षिप्त निष्कर्ष जोड़ें।' : 'Good length. End with a short closing line.'); return `${i + 1}. ${tips.join(' ')}`; }).join('\n') + '\n\n' + (lg === 'hi' ? '(AI फीडबैक के लिए GEMINI_API_KEY जोड़ें।)' : '(Add GEMINI_API_KEY for detailed AI feedback.)');
 const seededPaper=()=>[
