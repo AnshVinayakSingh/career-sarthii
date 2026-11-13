@@ -7,6 +7,8 @@ const getAtt=()=>store.get(attKey,[]),exam=()=>EXAMS.find(e=>e.id===me.exam)||EX
 const subj=id=>SUBJECTS.find(s=>s.id===id),chap=id=>CHAPTERS.find(c=>c.id===id);
 const fmt=s=>{s=Math.max(0,Math.round(s));const h=Math.floor(s/3600),m=Math.floor(s%3600/60),r=s%60;return(h?h+':'+String(m).padStart(2,'0'):m)+':'+String(r).padStart(2,'0')};
 const shuffle=a=>{a=a.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a};
+const md=x=>esc(x).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/^\* /gm,'• ');
+const qapi=async path=>{const r=await api(path);return r.questions};
 let timers=[],hook=null;
 const clearT=()=>{timers.forEach(clearInterval);timers=[];hook=null};
 const saveAtt=arr=>{const rows=arr.map(a=>Object.assign({ts:Date.now(),exam:me.exam},a));store.set(attKey,getAtt().concat(rows));api('/attempts',{method:'POST',body:JSON.stringify({attempts:rows})}).catch(e=>console.error(e));};
@@ -47,34 +49,36 @@ dashboard(){const a=getAtt();
 
 chat(){
  view.innerHTML=`${head('chat.t')}<div class="chat"><div class="msgs" id="ms"></div><div class="chips"><button class="tbtn">${t('chat.s1')}</button><button class="tbtn">${t('chat.s2')}</button><button class="tbtn">${t('chat.s3')}</button></div><form class="send" id="sf"><input id="mi" placeholder="${t('chat.ph')}" autocomplete="off"><button class="btn" type="submit">${t('chat.send')}</button></form></div>`;
- const ms=view.querySelector('#ms'),add=(x,me_)=>{const d=document.createElement('div');d.className='msg'+(me_?' me':'');d.textContent=x;ms.appendChild(d);ms.scrollTop=ms.scrollHeight};
+ const ms=view.querySelector('#ms'),add=(x,me_)=>{const d=document.createElement('div');d.className='msg'+(me_?' me':'');if(me_)d.textContent=x;else d.innerHTML=md(x);ms.appendChild(d);ms.scrollTop=ms.scrollHeight;return d};
  add(t('chat.hello')+' '+exam().n+'.');
  api('/chats').then(({messages})=>{ms.innerHTML='';messages.forEach(m=>add(m.message,m.role==='user'))}).catch(()=>{});
- const send=async x=>{if(!x.trim())return;add(x,true);try{const r=await api('/ai/chat',{method:'POST',body:JSON.stringify({message:x})});add(r.answer,false)}catch(e){add(e.message,false)}};
+ let busy=false;
+ const send=async x=>{if(!x.trim()||busy)return;busy=true;add(x,true);const bub=add('…',false);try{const r=await fetch('/api/ai/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({message:x})});if(r.status===401){location.replace('login.html');return}if((r.headers.get('content-type')||'').includes('json')){const j=await r.json();bub.innerHTML=md(j.answer||j.error||'Error')}else{const rd=r.body.getReader(),dc=new TextDecoder();let txt='';for(;;){const {done,value}=await rd.read();if(done)break;txt+=dc.decode(value,{stream:true});bub.innerHTML=md(txt);ms.scrollTop=ms.scrollHeight}}}catch(e){bub.textContent=e.message}finally{busy=false}};
  view.querySelectorAll('.chips button').forEach(b=>b.onclick=()=>send(b.textContent));
  view.querySelector('#sf').onsubmit=e=>{e.preventDefault();const i=view.querySelector('#mi');send(i.value);i.value=''};
 },
 
 pyq(){
- const years=[];for(let y=2025;y>=2019;y--)years.push(y);
- view.innerHTML=`${head('pyq.t','pyq.d')}<h3>${esc(exam().n)}</h3><div class="row2" style="max-width:420px;align-items:end"><div class="field" style="margin:0"><label for="yr">${t('q.year')}</label><select id="yr">${years.map(y=>`<option>${y}</option>`).join('')}</select></div><div><button class="btn" id="go">${t('q.start')}</button></div></div><p class="hint" style="margin-top:12px">${t('q.sample')}</p><div id="box" style="margin-top:24px"></div>`;
+ const real=((window.__meta||{}).pyq||{})[me.exam]||[];
+ view.innerHTML=`${head('pyq.t','pyq.d')}<h3>${esc(exam().n)}</h3><div class="row2" style="max-width:420px;align-items:end"><div class="field" style="margin:0"><label for="yr">${t('q.year')}</label><select id="yr">${real.map(y=>`<option value="y${y}">${y} (official)</option>`).join('')}${[1,2,3,4,5].map(n=>`<option value="s${n}">Practice set ${n}</option>`).join('')}</select></div><div><button class="btn" id="go">${t('q.start')}</button></div></div><p class="hint" style="margin-top:12px">${t('q.sample')}</p><div id="box" style="margin-top:24px"></div>`;
+ if(!window.__meta)api('/questions/meta').then(m=>{window.__meta=m;if(((m.pyq||{})[me.exam]||[]).length&&location.hash==='#pyq')pyq()}).catch(()=>{});
  const box=view.querySelector('#box');
- view.querySelector('#go').onclick=()=>{clearT();const start=()=>runQuiz(box,QUESTIONS,res=>summary(box,res,start));start()};
+ view.querySelector('#go').onclick=async()=>{clearT();const v=view.querySelector('#yr').value;box.textContent=t('model.busy');try{const start=async()=>{const qs=await qapi(v[0]==='y'?'/questions?year='+v.slice(1):'/questions?n=20&seed='+(+v.slice(1)*7919+Date.now()%1000));if(!qs.length){box.innerHTML=`<div class="notice">${t('chap.soon')}</div>`;return}runQuiz(box,qs,res=>summary(box,res,start))};await start()}catch(e){box.textContent=e.message}};
 },
 
 model(){
- view.innerHTML=`${head('model.t','model.d')}<button class="btn" id="gen">${t('model.gen')}</button><div id="box" style="margin-top:24px"></div>`;
+ view.innerHTML=`${head('model.t','model.d')}<div class="acts"><button class="btn" id="gen">${t('model.gen')}</button><button class="btn ghost" id="ai">${t('model.ai')}</button></div><div id="box" style="margin-top:24px"></div>`;
  const box=view.querySelector('#box');
- view.querySelector('#gen').onclick=async()=>{clearT();box.textContent=t('model.busy');try{const r=await api('/ai/paper',{method:'POST',body:'{}'});paper(box,r.questions)}catch(e){box.textContent=e.message}};
+ view.querySelector('#gen').onclick=async()=>{clearT();box.textContent=t('model.busy');try{paper(box,await qapi('/questions?paper=1&n=50&seed='+Date.now()%1e9))}catch(e){box.textContent=e.message}};
+ view.querySelector('#ai').onclick=async()=>{clearT();box.textContent=t('model.busy');try{const r=await api('/ai/paper',{method:'POST',body:'{}'});paper(box,r.questions)}catch(e){box.textContent=e.message}};
 },
 
 chapters(){
- let sid=SUBJECTS[0].id;
- const draw=()=>{clearT();view.innerHTML=`${head('chap.t')}<div class="tabs">${SUBJECTS.map(s=>`<button class="tbtn ${s.id===sid?'on':''}" data-s="${s.id}">${esc(L(s))}</button>`).join('')}</div><div class="list">${CHAPTERS.filter(c=>c.s===sid).map(c=>{const n=QUESTIONS.filter(q=>q.c===c.id).length;return`<button data-c="${c.id}"><b style="font-weight:500">${esc(L(c))}</b><span>${n} ${t('chap.n')}</span></button>`}).join('')}</div><div id="box" style="margin-top:20px"></div>`;
+ let sid=SUBJECTS[0].id,meta=(window.__meta||{}).chapters||{};
+ api('/questions/meta').then(m=>{window.__meta=m;meta=m.chapters;if(location.hash==='#chapters'&&!view.querySelector('#box').innerHTML)draw()}).catch(()=>{});
+ const draw=()=>{clearT();view.innerHTML=`${head('chap.t')}<div class="tabs">${SUBJECTS.map(s=>`<button class="tbtn ${s.id===sid?'on':''}" data-s="${s.id}">${esc(L(s))}</button>`).join('')}</div><div class="list">${CHAPTERS.filter(c=>c.s===sid).map(c=>{const n=meta[c.id];return`<button data-c="${c.id}"><b style="font-weight:500">${esc(L(c))}</b><span>${n==null?'':n<0?'∞':n} ${t('chap.n')}</span></button>`}).join('')}</div><div id="box" style="margin-top:20px"></div>`;
   view.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{sid=b.dataset.s;draw()});
-  view.querySelectorAll('.list button').forEach(b=>b.onclick=()=>{const qs=QUESTIONS.filter(q=>q.c===b.dataset.c),box=view.querySelector('#box');
-   if(!qs.length){box.innerHTML=`<div class="notice">${t('chap.soon')}</div>`;return}
-   const go=()=>runQuiz(box,qs,res=>summary(box,res,go));go();box.scrollIntoView({behavior:'smooth',block:'start'})});
+  view.querySelectorAll('.list button').forEach(b=>b.onclick=async()=>{const box=view.querySelector('#box');box.textContent=t('model.busy');try{const go=async()=>{const qs=await qapi('/questions?c='+b.dataset.c+'&n=10&seed='+Date.now()%1e9);if(!qs.length){box.innerHTML=`<div class="notice">${t('chap.soon')}</div>`;return}runQuiz(box,qs,res=>summary(box,res,go))};await go();box.scrollIntoView({behavior:'smooth',block:'start'})}catch(e){box.textContent=e.message}});
  };draw();hook=null;
 },
 
@@ -117,7 +121,7 @@ analysis(){
 
 /* three hour model paper */
 function paper(el,source=shuffle(QUESTIONS)){
- const qs=shuffle(source),ans=qs.map(()=>null),spent=qs.map(()=>0);let cur=0,mark=Date.now(),end=Date.now()+10800000,over=false;
+ const qs=shuffle(source),ans=qs.map(()=>null),spent=qs.map(()=>0);let cur=0,mark=Date.now(),total=Math.max(60,qs.length*72),end=Date.now()+total*1000,over=false;
  const lap=()=>{spent[cur]+=(Date.now()-mark)/1000;mark=Date.now()};
  function draw(){const q=qs[cur];
   el.innerHTML=`<div class="qhead"><span>${cur+1} ${t('q.of')} ${qs.length}</span><span>${t('model.left')}: <span class="timer" id="left">${fmt((end-Date.now())/1000)}</span></span></div>
@@ -133,9 +137,9 @@ function paper(el,source=shuffle(QUESTIONS)){
  function finish(){lap();clearT();
   const res=qs.map((q,i)=>({s:q.s,c:q.c,ok:ans[i]===q.a,sec:Math.round(spent[i]),src:'model'}));saveAtt(res);
   const ok=res.filter(r=>r.ok).length;
-  el.innerHTML=`<div class="kv"><div class="card"><b>${ok} / ${qs.length}</b><span>${t('q.score')}</span></div><div class="card"><b>${fmt(10800-Math.max(0,(end-Date.now())/1000))}</b><span>${t('model.left')}</span></div></div>
+  el.innerHTML=`<div class="kv"><div class="card"><b>${ok} / ${qs.length}</b><span>${t('q.score')}</span></div><div class="card"><b>${fmt(total-Math.max(0,(end-Date.now())/1000))}</b><span>${t('model.left')}</span></div></div>
   <h3>${t('model.review')}</h3>${qs.map((q,i)=>`<div class="fb ${ans[i]===q.a?'ok':'no'}"><b>${i+1}. ${esc(L(q.q))}</b>${ans[i]===null?t('model.skipped'):esc(L(q.o)[ans[i]])}${ans[i]===q.a?'':`<br>${t('q.wrong')} ${esc(L(q.o)[q.a])}<br><i>${t('q.exp')}:</i> ${esc(L(q.x))}`}</div>`).join('')}<button class="btn" id="ag">${t('model.gen')}</button>`;
-  el.querySelector('#ag').onclick=async()=>{el.textContent=t('model.busy');try{const r=await api('/ai/paper',{method:'POST',body:'{}'});paper(el,r.questions)}catch(e){el.textContent=e.message}};
+  el.querySelector('#ag').onclick=async()=>{el.textContent=t('model.busy');try{paper(el,await qapi('/questions?paper=1&n=50&seed='+Date.now()%1e9))}catch(e){el.textContent=e.message}};
  }
  hook=draw;timers.push(setInterval(()=>{const e=document.getElementById('left');if(e)e.textContent=fmt((end-Date.now())/1000);if(Date.now()>=end&&!over){over=true;finish()}},1000));draw();
 }
@@ -150,7 +154,7 @@ function interviewRun(el,lg){
   el.querySelector('#sp').onclick=()=>{if(!('speechSynthesis' in window))return;speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(qs[i]);u.lang=lg==='hi'?'hi-IN':'en-IN';speechSynthesis.speak(u)};
   el.querySelector('#nx').onclick=()=>{speechSynthesis&&speechSynthesis.cancel();ans.push({q:qs[i],a:el.querySelector('#ta').value.trim(),sec:Math.round((Date.now()-st)/1000)});if(i===qs.length-1)end();else{i++;st=Date.now();draw()}};
  }
- async function end(){clearT();const words=x=>x.split(/\s+/).filter(Boolean).length;
+ async function end(){clearT();el.innerHTML='<div class="notice">Preparing your feedback…</div>';const words=x=>x.split(/\s+/).filter(Boolean).length;
   const summary={n:ans.length,words:ans.reduce((s,x)=>s+words(x.a),0),sec:ans.reduce((s,x)=>s+x.sec,0)};store.set(intKey,store.get(intKey,[]).concat([{ts:Date.now(),exam:me.exam,...summary}]));let feedback='Review each answer for a clear structure: direct response, one specific example, and a concise closing. Verify any facts you mention.';try{const r=await api('/ai/interview',{method:'POST',body:JSON.stringify({language:lg,answers:ans})});feedback=r.feedback}catch(e){feedback=e.message}api('/interviews',{method:'POST',body:JSON.stringify({language:lg,summary:{...summary,answers:ans,feedback}})}).catch(console.error);
   el.innerHTML=`<h3>${t('int.sum')}</h3>${ans.map((x,k)=>`<div class="fb"><b>${k+1}. ${esc(x.q)}</b>${esc(x.a)||'-'}<br><span class="hint">${words(x.a)} ${t('int.words')}, ${x.sec} ${t('sec')}</span></div>`).join('')}<div class="notice"><b>Interview feedback</b><br>${esc(feedback)}</div>`}
  timers.push(setInterval(()=>{const e=document.getElementById('qt');if(e)e.textContent=fmt((Date.now()-st)/1000)},500));draw();

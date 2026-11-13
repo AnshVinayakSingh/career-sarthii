@@ -90,3 +90,50 @@ textarea{min-height:120px;resize:vertical}
 @media(max-width:860px){.hero,.two,.steps,.feat-list,.grid3,.kv{grid-template-columns:1fr}.hero{padding-top:32px}.nav,.hide-m{display:none}
 .app{grid-template-columns:1fr}.side{position:static;height:auto;flex-direction:row;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line);padding:10px}.side .brand,.side .bot{display:none}.side a.nl{white-space:nowrap;border-left:0;border-bottom:3px solid transparent}.side a.nl.on{border-bottom-color:var(--mark)}.main{padding:0 16px 48px}.row2{grid-template-columns:1fr}.chat{height:70vh}}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+
+/* ---------- responsive polish (all screen sizes) ---------- */
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+img,svg,canvas{max-width:100%}
+body{padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right);overflow-wrap:break-word}
+.tbtn,.opt,.btn,.list>button{min-height:40px}
+.msg{white-space:pre-wrap;overflow-wrap:anywhere;max-width:min(78%,680px)}
+.msg b{font-weight:600}
+.chat{height:calc(100vh - 190px);height:calc(100dvh - 190px)}
+.main{max-width:1180px}
+.qtext{white-space:pre-line}
+.list>button{gap:12px;align-items:center}
+table{max-width:100%;display:block;overflow-x:auto}
+@media(min-width:1400px){.wrap{max-width:1240px}.main{padding:0 48px 64px}.app{grid-template-columns:250px 1fr}}
+@media(max-width:1100px){.grid3{grid-template-columns:repeat(2,1fr)}.kv{grid-template-columns:repeat(2,1fr)}.main{padding:0 24px 56px}.app{grid-template-columns:200px 1fr}}
+@media(max-width:860px){
+ .hide-m{display:inline-flex!important}
+ .grid3{grid-template-columns:1fr 1fr}.kv{grid-template-columns:1fr 1fr}
+ .side{position:sticky;top:0;z-index:6;background:var(--bg);scrollbar-width:none}.side::-webkit-scrollbar{display:none}
+ .topbar{position:static}.topbar select{flex:1;min-width:0;max-width:none}.topbar .sp{margin-left:0;width:100%;justify-content:flex-end}
+ .chat{height:calc(100dvh - 260px);min-height:320px}.msg{max-width:92%}
+ .hero{gap:24px;padding:28px 0 48px}#globe{max-width:360px;margin:0 auto}
+ .bar{gap:12px}.tools{gap:8px}
+ section.block{padding:44px 0}
+}
+@media(max-width:560px){
+ body{font-size:15.5px}
+ .wrap{padding:0 16px}.main{padding:0 14px 40px}.page,.auth{padding:32px 16px 56px}
+ .grid3,.kv{grid-template-columns:1fr}
+ .kv .card{padding:14px}
+ .card{padding:16px}
+ .site-header .brand span{display:none}.bar{height:58px}
+ .tools .btn.sm,.tools .tbtn{padding:6px 10px;font-size:13px}
+ .cta-row .btn{flex:1 1 100%}
+ .qhead{flex-wrap:wrap;gap:6px}.qtext{font-size:1.08rem}
+ .acts .btn{flex:1 1 calc(50% - 10px)}
+ .pal button{width:34px;height:34px}
+ .list>button{flex-wrap:wrap}
+ .send{gap:8px}.send .btn{padding:10px 14px}
+ .chips button{flex:1 1 100%;text-align:left}
+ .row2{grid-template-columns:1fr}
+ input,select,textarea{font-size:16px}
+ .site-footer .sp{margin-left:0}
+ .chat{height:calc(100dvh - 240px)}
+}
+@media(max-height:480px) and (orientation:landscape){.chat{height:calc(100dvh - 110px);min-height:240px}.side{padding:6px 10px}}
+@media(max-width:360px){.tools .tbtn{padding:6px 8px}.tools .btn.sm{padding:6px 8px}.opt{padding:10px 12px}}
