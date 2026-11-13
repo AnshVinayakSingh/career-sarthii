@@ -44,3 +44,8 @@ This is a runnable local application, not a production deployment. The seeded qu
   `{"exam":"ssc-cgl","year":2023,"s":"quant","c":"pct","q":"...","o":["a","b","c","d"],"a":1,"x":"explanation"}`.
   `exam` must match an exam id from `js/data.js`. Years then appear in the PYQ tab automatically after a restart.
 - AI (Gemini) is used only for chat, interview feedback and the optional "Extra paper with AI". Chat streams the reply as it is written. Thinking level is `low` by default (`GEMINI_THINKING=low|medium|high`).
+
+## Chat speed settings (optional environment variables)
+
+- `GEMINI_CHAT_MODEL` default `gemini-3.5-flash-lite` (fastest). If it sends nothing within 8 seconds (`GEMINI_FIRST_TOKEN_MS`) or is busy, the chat automatically tries `gemini-3.6-flash`, then `GEMINI_MODEL` and `GEMINI_FALLBACK_MODELS`.
+- `GEMINI_THINKING` leave empty (minimal for flash-lite, low for others).

@@ -7,7 +7,7 @@ const getAtt=()=>store.get(attKey,[]),exam=()=>EXAMS.find(e=>e.id===me.exam)||EX
 const subj=id=>SUBJECTS.find(s=>s.id===id),chap=id=>CHAPTERS.find(c=>c.id===id);
 const fmt=s=>{s=Math.max(0,Math.round(s));const h=Math.floor(s/3600),m=Math.floor(s%3600/60),r=s%60;return(h?h+':'+String(m).padStart(2,'0'):m)+':'+String(r).padStart(2,'0')};
 const shuffle=a=>{a=a.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a};
-const md=x=>esc(x).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/^\* /gm,'• ');
+const md=x=>{const code=[];let h=esc(x).replace(/```(?:\w+)?\n?([\s\S]*?)```/g,(_,c)=>{code.push(c);return '\u0000'+(code.length-1)+'\u0000'});h=h.replace(/`([^`\n]+)`/g,'<code>$1</code>').replace(/\*\*(.+?)\*\*/g,'<b>$1</b>');const out=[];let list=null;for(const ln of h.split('\n')){let m;if(m=ln.match(/^\s*(?:[-*\u2022]|\d+[.)])\s+(.*)/)){const o=/^\s*\d/.test(ln)?'ol':'ul';if(list!==o){if(list)out.push('</'+list+'>');out.push('<'+o+'>');list=o}out.push('<li>'+m[1]+'</li>');continue}if(list){out.push('</'+list+'>');list=null}if(m=ln.match(/^&gt;\s?(.*)/)){out.push('<blockquote>'+m[1]+'</blockquote>');continue}if(m=ln.match(/^#{1,4}\s+(.*)/)){out.push('<h4>'+m[1]+'</h4>');continue}out.push(ln.trim()===''?'<div class="gap"></div>':'<div>'+ln+'</div>')}if(list)out.push('</'+list+'>');return out.join('').replace(/\u0000(\d+)\u0000/g,(_,i)=>'<pre><code>'+code[i]+'</code></pre>')};
 const qapi=async path=>{const r=await api(path);return r.questions};
 let timers=[],hook=null;
 const clearT=()=>{timers.forEach(clearInterval);timers=[];hook=null};
@@ -48,14 +48,52 @@ dashboard(){const a=getAtt();
  },
 
 chat(){
- view.innerHTML=`${head('chat.t')}<div class="chat"><div class="msgs" id="ms"></div><div class="chips"><button class="tbtn">${t('chat.s1')}</button><button class="tbtn">${t('chat.s2')}</button><button class="tbtn">${t('chat.s3')}</button></div><form class="send" id="sf"><input id="mi" placeholder="${t('chat.ph')}" autocomplete="off"><button class="btn" type="submit">${t('chat.send')}</button></form></div>`;
- const ms=view.querySelector('#ms'),add=(x,me_)=>{const d=document.createElement('div');d.className='msg'+(me_?' me':'');if(me_)d.textContent=x;else d.innerHTML=md(x);ms.appendChild(d);ms.scrollTop=ms.scrollHeight;return d};
- add(t('chat.hello')+' '+exam().n+'.');
- api('/chats').then(({messages})=>{ms.innerHTML='';messages.forEach(m=>add(m.message,m.role==='user'))}).catch(()=>{});
- let busy=false;
- const send=async x=>{if(!x.trim()||busy)return;busy=true;add(x,true);const bub=add('…',false);try{const r=await fetch('/api/ai/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({message:x})});if(r.status===401){location.replace('login.html');return}if((r.headers.get('content-type')||'').includes('json')){const j=await r.json();bub.innerHTML=md(j.answer||j.error||'Error')}else{const rd=r.body.getReader(),dc=new TextDecoder();let txt='';for(;;){const {done,value}=await rd.read();if(done)break;txt+=dc.decode(value,{stream:true});bub.innerHTML=md(txt);ms.scrollTop=ms.scrollHeight}}}catch(e){bub.textContent=e.message}finally{busy=false}};
- view.querySelectorAll('.chips button').forEach(b=>b.onclick=()=>send(b.textContent));
- view.querySelector('#sf').onsubmit=e=>{e.preventDefault();const i=view.querySelector('#mi');send(i.value);i.value=''};
+ view.innerHTML=`${head('chat.t')}<div class="chatwrap" id="cw"><aside class="convs" id="cv"><button class="btn" id="nc" type="button">+ ${t('chat.new')}</button><div class="cl" id="cl"></div><button class="tbtn" id="clr" type="button">${t('chat.clear')}</button></aside><section class="chat"><div class="chat-top"><button class="tbtn" id="hb" type="button">\u2630 ${t('chat.hist')}</button><b id="ct">${t('chat.t')}</b><button class="tbtn" id="nc2" type="button">+ ${t('chat.new')}</button></div><div class="msgs" id="ms"></div><button class="down hide" id="dn" type="button" aria-label="Scroll to latest">\u2193</button><div class="chips" id="chips"><button class="tbtn">${t('chat.s1')}</button><button class="tbtn">${t('chat.s2')}</button><button class="tbtn">${t('chat.s3')}</button></div><div class="replyto hide" id="rq"><span id="rqt"></span><button class="tbtn" id="rqx" type="button" aria-label="Cancel reply">\u2715</button></div><form class="send" id="sf"><textarea id="mi" rows="1" placeholder="${t('chat.ph')}" enterkeyhint="send"></textarea><button class="btn" id="sb" type="submit">${t('chat.send')}</button></form></section></div>`;
+ const $=q=>view.querySelector(q),cw=$('#cw'),cv=$('#cv'),ms=$('#ms'),mi=$('#mi'),sb=$('#sb'),dn=$('#dn'),rq=$('#rq'),chips=$('#chips');
+ let convId=null,busy=false,ctrl=null,quote='',convList=[];
+ const fit=()=>{const top=cw.getBoundingClientRect().top;cw.style.height=Math.max(340,window.innerHeight-Math.max(top,0)-14)+'px'};
+ fit();addEventListener('resize',fit);hook=()=>removeEventListener('resize',fit);
+ const near=()=>ms.scrollHeight-ms.scrollTop-ms.clientHeight<140,toEnd=()=>{ms.scrollTop=ms.scrollHeight};
+ ms.addEventListener('scroll',()=>dn.classList.toggle('hide',near()));dn.onclick=()=>{toEnd()};
+ const bar=el=>{const last=el.classList.contains('bot')?`<button data-a="regen">\u21bb ${t('chat.regen')}</button>`:'';return`<div class="mt"><button data-a="copy">${t('chat.copy')}</button><button data-a="reply">${t('chat.reply')}</button>${last}</div>`};
+ const add=(x,me_,saved=true)=>{const d=document.createElement('div');d.className='msg '+(me_?'me':'bot');d._raw=x;d._saved=saved;d.innerHTML=`<div class="mc">${md(x)}</div>`+(me_?'':bar(d));if(me_)d.insertAdjacentHTML('beforeend',bar(d).replace(/<button data-a="regen">.*?<\/button>/,''));ms.appendChild(d);return d};
+ const setBot=(d,x)=>{d._raw=x;d.querySelector('.mc').innerHTML=md(x)};
+ const empty=()=>{ms.innerHTML='';add(t('chat.hello')+' '+exam().n+'.',false);chips.classList.remove('hide');convId=null;$('#ct').textContent=t('chat.t')};
+ const trimRegen=()=>{ms.querySelectorAll('.bot .mt [data-a=regen]').forEach(b=>b.remove());const bots=ms.querySelectorAll('.bot');const l=bots[bots.length-1];if(l&&l._raw&&!l.querySelector('[data-a=regen]')&&ms.children.length>1)l.querySelector('.mt').insertAdjacentHTML('beforeend',`<button data-a="regen">\u21bb ${t('chat.regen')}</button>`)};
+ const drawList=()=>{const cl=$('#cl');cl.innerHTML=convList.length?'':`<p class="hint" style="padding:8px">${t('chat.none')}</p>`;convList.forEach(c=>{const row=document.createElement('div');row.className='ci'+(c.id===convId?' on':'');row.innerHTML=`<button class="ct" type="button">${esc(c.title)}</button><button class="cx" type="button" aria-label="${t('chat.del')}" title="${t('chat.del')}">\u2715</button>`;row.querySelector('.ct').onclick=()=>open(c.id);row.querySelector('.cx').onclick=async()=>{if(!confirm(t('chat.del')+'?'))return;await api('/convs/'+c.id,{method:'DELETE'}).catch(()=>{});convList=convList.filter(x=>x.id!==c.id);if(convId===c.id)empty();drawList()};cl.appendChild(row)})};
+ const load=async()=>{try{convList=(await api('/convs')).convs;drawList();return convList}catch{return[]}};
+ const open=async id=>{cv.classList.remove('open');try{const r=await api('/convs/'+id);ms.innerHTML='';r.messages.forEach(m=>add(m.message,m.role==='user'));convId=id;$('#ct').textContent=r.title;chips.classList.add('hide');trimRegen();toEnd();drawList()}catch(e){alert(e.message)}};
+ const stopUi=()=>{busy=false;ctrl=null;sb.textContent=t('chat.send');sb.classList.remove('stop')};
+ const run=async(text,o={})=>{
+  if(busy||!text.trim())return;busy=true;sb.textContent=t('chat.stop');sb.classList.add('stop');chips.classList.add('hide');
+  if(!o.reuse)add(text,true);
+  const bub=add('\u2026',false,false);bub.classList.add('typing');toEnd();ctrl=new AbortController();let txt='',failed=false;
+  try{
+   const r=await fetch('/api/ai/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({message:text,convId,regen:!!o.regen}),signal:ctrl.signal});
+   if(r.status===401){location.replace('login.html');return}
+   if((r.headers.get('content-type')||'').includes('json')){const j=await r.json();txt=j.answer||j.error||'Error';failed=!j.answer||!!j.error;setBot(bub,txt)}
+   else{const id=r.headers.get('x-conv-id');if(id)convId=id;const rd=r.body.getReader(),dc=new TextDecoder();for(;;){const {done,value}=await rd.read();if(done)break;txt+=dc.decode(value,{stream:true});bub.classList.remove('typing');const stick=near();setBot(bub,txt);if(stick)toEnd();else dn.classList.remove('hide')}}
+  }catch(e){if(e.name==='AbortError'){if(!txt)setBot(bub,'('+t('chat.stopped')+')'),failed=true}else{failed=true;setBot(bub,txt||e.message)}}
+  finally{bub.classList.remove('typing');bub._saved=!failed&&!!txt;stopUi();trimRegen();if(!failed&&convId){const c=await load();const cur=c.find(x=>x.id===convId);if(cur)$('#ct').textContent=cur.title}}
+ };
+ const send=x=>run(buildMsg(x));
+ const buildMsg=x=>{const q=quote;clearQuote();return q?q.split('\n').map(l=>'> '+l).join('\n')+'\n\n'+x:x};
+ const clearQuote=()=>{quote='';rq.classList.add('hide')};
+ $('#rqx').onclick=clearQuote;
+ ms.addEventListener('click',async e=>{const b=e.target.closest('button[data-a]');if(!b)return;const m=b.closest('.msg'),raw=(m._raw||'').replace(/^(>.*\n?)+\s*/,'');
+  if(b.dataset.a==='copy'){try{await navigator.clipboard.writeText(raw)}catch{const ta=document.createElement('textarea');ta.value=raw;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove()}b.textContent='\u2713';setTimeout(()=>{b.textContent=t('chat.copy')},1200)}
+  if(b.dataset.a==='reply'){quote=raw.slice(0,200);$('#rqt').textContent=t('chat.replying')+': '+raw.slice(0,90)+(raw.length>90?'\u2026':'');rq.classList.remove('hide');mi.focus()}
+  if(b.dataset.a==='regen'&&!busy){const users=ms.querySelectorAll('.me'),lu=users[users.length-1];if(!lu)return;const saved=m._saved;m.remove();run(lu._raw,{reuse:true,regen:saved})}
+ });
+ chips.querySelectorAll('button').forEach(b=>b.onclick=()=>send(b.textContent));
+ const grow=()=>{mi.style.height='auto';mi.style.height=Math.min(mi.scrollHeight,140)+'px'};mi.addEventListener('input',grow);
+ const coarse=matchMedia('(pointer:coarse)').matches;
+ mi.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!coarse){e.preventDefault();$('#sf').requestSubmit()}});
+ $('#sf').onsubmit=e=>{e.preventDefault();if(busy){ctrl&&ctrl.abort();return}const x=mi.value.trim();if(!x)return;mi.value='';grow();send(x)};
+ const fresh=()=>{if(busy)return;empty();cv.classList.remove('open');drawList();mi.focus()};
+ $('#nc').onclick=fresh;$('#nc2').onclick=fresh;$('#hb').onclick=()=>cv.classList.toggle('open');
+ $('#clr').onclick=async()=>{if(!convList.length||!confirm(t('chat.clear')+'?'))return;await api('/convs',{method:'DELETE'}).catch(()=>{});convList=[];empty();drawList()};
+ empty();load().then(l=>{if(l.length)open(l[0].id)});hook=()=>removeEventListener('resize',fit);
 },
 
 pyq(){

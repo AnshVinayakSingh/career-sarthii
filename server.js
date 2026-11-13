@@ -26,14 +26,18 @@ const mimeTypes={'.html':'text/html; charset=utf-8','.css':'text/css; charset=ut
 const send=(res,status,data,headers={})=>{res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store',...headers});res.end(JSON.stringify(data));};
 const readBody=req=>new Promise((resolve,reject)=>{let chunks=[],size=0;req.on('data',c=>{size+=c.length;if(size>12*1024*1024){reject(new Error('Request too large'));req.destroy();return;}chunks.push(c)});req.on('end',()=>{try{resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')||'{}'))}catch{reject(new Error('Invalid JSON'))}});req.on('error',reject)});
 const cookie=(token,age=60*60*24*14)=>`${cookieName}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax;${IS_PROD?' Secure;':''} Max-Age=${age}`;
-let client,db,users,attempts,chats,documents,interviews;
+let client,db,users,attempts,chats,convs,documents,interviews;
 async function sessionUser(req){const value=(req.headers.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith(cookieName+'='));if(!value)return null;const data=jwtVerify(decodeURIComponent(value.slice(cookieName.length+1)));if(!data||!ObjectId.isValid(data.sub))return null;return users.findOne({_id:new ObjectId(data.sub)});}
 async function requireUser(req,res){const u=await sessionUser(req);if(!u)send(res,401,{error:'Please log in again.'});return u;}
 async function createSession(userId,res){res.setHeader('Set-Cookie',cookie(jwtSign({sub:String(userId)})));}
-const THINK = process.env.GEMINI_THINKING || 'low';
-const MODELS = [GEMINI_MODEL, ...(process.env.GEMINI_FALLBACK_MODELS || 'gemini-3.6-flash,gemini-3.7-flash').split(',').map(x => x.trim())].filter((m, i, arr) => m && arr.indexOf(m) === i);
+const THINK_ENV = process.env.GEMINI_THINKING || '';
+const thinkFor = m => THINK_ENV || (/flash-lite/.test(m) ? 'minimal' : 'low');
+const dedupe = arr => arr.filter((m, i, x) => m && x.indexOf(m) === i);
+const MODELS = dedupe([GEMINI_MODEL, ...(process.env.GEMINI_FALLBACK_MODELS || 'gemini-3.6-flash,gemini-3.7-flash').split(',').map(x => x.trim())]);
+const CHAT_MODELS = dedupe([process.env.GEMINI_CHAT_MODEL || 'gemini-3.5-flash-lite', 'gemini-3.6-flash', ...MODELS]);
+const FIRST_TOKEN_MS = Number(process.env.GEMINI_FIRST_TOKEN_MS) || 8000;
 const RETRY = [404, 429, 500, 502, 503, 504];
-function gBody(model, contents, config = {}, system) { const generationConfig = { ...config }; delete generationConfig.temperature; if (/gemini-3/.test(model)) generationConfig.thinkingConfig = { thinkingLevel: THINK }; const body = { contents, generationConfig }; if (system) body.systemInstruction = { parts: [{ text: system }] }; return JSON.stringify(body); }
+function gBody(model, contents, config = {}, system) { const generationConfig = { ...config }; delete generationConfig.temperature; if (/gemini-3/.test(model)) generationConfig.thinkingConfig = { thinkingLevel: thinkFor(model) }; const body = { contents, generationConfig }; if (system) body.systemInstruction = { parts: [{ text: system }] }; return JSON.stringify(body); }
 const GBASE = process.env.GEMINI_BASE || 'https://generativelanguage.googleapis.com';
 const gUrl = (model, stream) => `${GBASE}/v1beta/models/${encodeURIComponent(model)}:${stream ? 'streamGenerateContent?alt=sse' : 'generateContent'}`;
 const gHeaders = { 'content-type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY };
@@ -41,7 +45,7 @@ const gText = p => (p.candidates?.[0]?.content?.parts || []).filter(x => !x.thou
 async function gemini(contents, config = {}, system) {
   if (!GEMINI_API_KEY) return null; let lastErr;
   for (const model of MODELS) {
-    const response = await fetch(gUrl(model, false), { method: 'POST', headers: gHeaders, body: gBody(model, contents, config, system), signal: AbortSignal.timeout(60000) }).catch(e => ({ ok: false, status: 0, json: async () => ({ error: { message: e.message } }) }));
+    const response = await fetch(gUrl(model, false), { method: 'POST', headers: gHeaders, body: gBody(model, contents, config, system), signal: AbortSignal.timeout(35000) }).catch(e => ({ ok: false, status: 0, json: async () => ({ error: { message: e.message } }) }));
     const payload = await response.json().catch(() => ({}));
     if (response.ok) { const t = gText(payload).trim(); if (t) return t; lastErr = new Error('Empty answer'); continue; }
     lastErr = new Error(payload.error?.message || `Gemini returned ${response.status}`);
@@ -49,19 +53,28 @@ async function gemini(contents, config = {}, system) {
   }
   throw lastErr;
 }
-async function geminiStream(contents, config, system, onText) {
+async function geminiStream(contents, config, system, onText, signal) {
   let lastErr;
-  for (const model of MODELS) {
-    let r; try { r = await fetch(gUrl(model, true), { method: 'POST', headers: gHeaders, body: gBody(model, contents, config, system), signal: AbortSignal.timeout(90000) }); } catch (e) { lastErr = e; continue; }
-    if (!r.ok) { const p = await r.json().catch(() => ({})); lastErr = new Error(p.error?.message || `Gemini returned ${r.status}`); if (RETRY.includes(r.status)) continue; throw lastErr; }
-    const reader = r.body.getReader(), dec = new TextDecoder(); let buf = '', full = '';
-    for (;;) {
-      const { done, value } = await reader.read(); if (done) break; buf += dec.decode(value, { stream: true }); let i;
-      while ((i = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (!line.startsWith('data:')) continue; const j = line.slice(5).trim(); if (!j || j === '[DONE]') continue; try { const t = gText(JSON.parse(j)); if (t) { full += t; onText(t); } } catch {} }
-    }
-    if (full) return full; lastErr = new Error('Empty answer');
+  for (const model of CHAT_MODELS) {
+    if (signal?.aborted) throw new Error('aborted');
+    const ac = new AbortController(), onAbort = () => ac.abort(); signal?.addEventListener('abort', onAbort);
+    let gotText = false, timedOut = false; const timer = setTimeout(() => { if (!gotText) { timedOut = true; ac.abort(); } }, FIRST_TOKEN_MS);
+    try {
+      const r = await fetch(gUrl(model, true), { method: 'POST', headers: gHeaders, body: gBody(model, contents, config, system), signal: ac.signal });
+      if (!r.ok) { const p = await r.json().catch(() => ({})); lastErr = new Error(p.error?.message || `Gemini returned ${r.status}`); if (RETRY.includes(r.status) || r.status === 400) continue; throw lastErr; }
+      const reader = r.body.getReader(), dec = new TextDecoder(); let buf = '', full = '';
+      for (;;) {
+        const { done, value } = await reader.read(); if (done) break; buf += dec.decode(value, { stream: true }); let i;
+        while ((i = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (!line.startsWith('data:')) continue; const j = line.slice(5).trim(); if (!j || j === '[DONE]') continue; try { const t = gText(JSON.parse(j)); if (t) { if (!gotText) { gotText = true; clearTimeout(timer); } full += t; onText(t); } } catch {} }
+      }
+      if (full) return full; lastErr = new Error('Empty answer');
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      if (gotText) throw e;
+      lastErr = timedOut ? new Error('Model was too slow') : e;
+    } finally { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); }
   }
-  throw lastErr;
+  throw lastErr || new Error('No model answered');
 }
 const localFeedback = (answers, lg) => answers.map((a, i) => { const w = String(a.a || '').split(/\s+/).filter(Boolean).length; const tips = []; if (w < 20) tips.push(lg === 'hi' ? 'उत्तर बहुत छोटा है, कम से कम 3 से 4 वाक्य बोलें।' : 'Answer is very short; aim for at least 3 to 4 sentences.'); else if (w > 150) tips.push(lg === 'hi' ? 'उत्तर लंबा है, मुख्य बिंदुओं पर टिके रहें।' : 'Answer is long; keep to the main points.'); if (!/\d|for example|such as|उदाहरण|जैसे/i.test(a.a || '')) tips.push(lg === 'hi' ? 'एक उदाहरण या तथ्य जोड़ें।' : 'Add one specific example or fact.'); if (!tips.length) tips.push(lg === 'hi' ? 'उत्तर संतुलित है। अंत में एक संक्षिप्त निष्कर्ष जोड़ें।' : 'Good length. End with a short closing line.'); return `${i + 1}. ${tips.join(' ')}`; }).join('\n') + '\n\n' + (lg === 'hi' ? '(AI फीडबैक के लिए GEMINI_API_KEY जोड़ें।)' : '(Add GEMINI_API_KEY for detailed AI feedback.)');
 const seededPaper=()=>[
@@ -96,7 +109,7 @@ const server=http.createServer(async(req,res)=>{
    if(url.pathname==='/api/logout'&&req.method==='POST')return send(res,200,{ok:true},{'Set-Cookie':cookie('',0)});
    if(url.pathname==='/api/me'&&req.method==='GET'){const u=await requireUser(req,res);if(u)return send(res,200,{user:safeUser(u)});return;}
    const user=await requireUser(req,res);if(!user)return;
-   if(url.pathname==='/api/account'&&req.method==='DELETE'){const filter={userId:user._id};await Promise.all([attempts.deleteMany(filter),chats.deleteMany(filter),documents.deleteMany(filter),interviews.deleteMany(filter)]);await users.deleteOne({_id:user._id});return send(res,200,{ok:true},{'Set-Cookie':cookie('',0)});}
+   if(url.pathname==='/api/account'&&req.method==='DELETE'){const filter={userId:user._id};await Promise.all([attempts.deleteMany(filter),chats.deleteMany(filter),convs.deleteMany(filter),documents.deleteMany(filter),interviews.deleteMany(filter)]);await users.deleteOne({_id:user._id});return send(res,200,{ok:true},{'Set-Cookie':cookie('',0)});}
    if(url.pathname==='/api/profile'&&req.method==='PATCH'){const b=await readBody(req);if(!b.exam)return send(res,400,{error:'Choose an exam.'});await users.updateOne({_id:user._id},{$set:{exam:String(b.exam)}});return send(res,200,{ok:true});}
    if(url.pathname==='/api/attempts'&&req.method==='GET'){const rows=await attempts.find({userId:user._id}).sort({_id:-1}).limit(2000).toArray();return send(res,200,{attempts:rows.map(x=>({exam:x.exam,src:x.src,s:x.s,c:x.c,ok:x.ok,sec:x.sec,ts:x.createdAt}))});}
    if(url.pathname==='/api/attempts'&&req.method==='POST'){const b=await readBody(req),rows=Array.isArray(b.attempts)?b.attempts.slice(0,300):[];if(rows.length)await attempts.insertMany(rows.map(a=>({userId:user._id,exam:String(a.exam||user.exam),src:String(a.src||'quiz'),s:String(a.s||''),c:String(a.c||''),ok:Boolean(a.ok),sec:Math.max(0,Math.min(86400,Number(a.sec)||0)),createdAt:new Date()})));return send(res,201,{saved:rows.length});}
@@ -106,21 +119,37 @@ const server=http.createServer(async(req,res)=>{
    const deleteDoc=url.pathname.match(/^\/api\/documents\/([a-f\d]{24})$/i);if(deleteDoc&&req.method==='DELETE'){await documents.deleteOne({_id:new ObjectId(deleteDoc[1]),userId:user._id});return send(res,200,{ok:true});}
    if(url.pathname==='/api/interviews'&&req.method==='GET'){const rows=await interviews.find({userId:user._id},{projection:{exam:1,language:1,createdAt:1}}).sort({_id:-1}).limit(100).toArray();return send(res,200,{interviews:rows.map(x=>({exam:x.exam,language:x.language,ts:x.createdAt}))});}
    if(url.pathname==='/api/interviews'&&req.method==='POST'){const b=await readBody(req);await interviews.insertOne({userId:user._id,exam:user.exam,language:String(b.language||'en'),summary:b.summary||{},createdAt:new Date()});return send(res,201,{ok:true});}
+   const convMatch=url.pathname.match(/^\/api\/convs(?:\/([a-f0-9]{24}))?$/);
+   if(convMatch){
+    const cid=convMatch[1];
+    if(!cid&&req.method==='GET'){const rows=await convs.find({userId:user._id}).sort({updatedAt:-1}).limit(50).toArray();return send(res,200,{convs:rows.map(c=>({id:String(c._id),title:c.title,updatedAt:c.updatedAt}))});}
+    if(!cid&&req.method==='DELETE'){await Promise.all([convs.deleteMany({userId:user._id}),chats.deleteMany({userId:user._id})]);return send(res,200,{ok:true});}
+    if(cid&&req.method==='GET'){const c=await convs.findOne({_id:new ObjectId(cid),userId:user._id});if(!c)return send(res,404,{error:'Chat not found.'});const rows=await chats.find({convId:c._id}).sort({_id:-1}).limit(200).toArray();return send(res,200,{title:c.title,messages:rows.reverse().map(x=>({role:x.role,message:x.message}))});}
+    if(cid&&req.method==='DELETE'){await Promise.all([convs.deleteOne({_id:new ObjectId(cid),userId:user._id}),chats.deleteMany({convId:new ObjectId(cid),userId:user._id})]);return send(res,200,{ok:true});}
+   }
    if(url.pathname==='/api/ai/chat'&&req.method==='POST'){
     const b=await readBody(req),message=String(b.message||'').trim().slice(0,4000);if(!message)return send(res,400,{error:'Write a question first.'});
     if(!GEMINI_API_KEY)return send(res,200,{answer:'AI is not configured yet. Add GEMINI_API_KEY in the server environment.'});
-    const system=`You are Career Sarthii, a friendly bilingual tutor for Indian government exams. The student's exam: ${user.exam}. Reply in the language the student writes in (Hindi or English). Be concise and clear: short paragraphs or bullet points, no long preambles. If study documents are attached, use them as reference.`;
-    const hist=(await chats.find({userId:user._id}).sort({_id:-1}).limit(6).toArray()).reverse().map(x=>({role:x.role==='user'?'user':'model',parts:[{text:String(x.message).slice(0,1500)}]}));
+    let conv=null;if(b.convId&&ObjectId.isValid(b.convId))conv=await convs.findOne({_id:new ObjectId(b.convId),userId:user._id});
+    const convId=conv?conv._id:new ObjectId();
+    if(conv&&b.regen){const last=await chats.find({convId}).sort({_id:-1}).limit(2).toArray();for(const m of last)await chats.deleteOne({_id:m._id});}
+    const system=`You are Career Sarthii, a friendly bilingual tutor for Indian government exams. The student's exam: ${user.exam}. Reply in the language the student writes in (Hindi or English). Keep answers short and clear (about 120 words unless the student asks for detail): short paragraphs or bullet points, no preamble, no markdown tables. If the message starts with "> " lines, that is the earlier message the student is replying to. If study documents are attached, use them as reference.`;
+    const hist=conv?(await chats.find({convId}).sort({_id:-1}).limit(6).toArray()).reverse().map(x=>({role:x.role==='user'?'user':'model',parts:[{text:String(x.message).slice(0,1500)}]})):[];
     const parts=[];
     if(/pdf|paper|document|notes|upload|file|दस्तावेज|नोट्स|पेपर/i.test(message)){let used=0;const docs=await documents.find({userId:user._id,mime:{$in:['application/pdf','text/plain']}}).sort({_id:-1}).limit(2).toArray();for(const d of docs){const raw=d.content,content=Buffer.isBuffer(raw)?raw:Buffer.from(raw.buffer.subarray(0,raw.position));if(used+content.length>6*1024*1024)continue;used+=content.length;if(d.mime==='application/pdf')parts.push({inline_data:{mime_type:d.mime,data:content.toString('base64')}});else parts.push({text:`Study document ${d.name}: ${content.toString('utf8').slice(0,12000)}`});}}
     parts.push({text:message});
+    const ac=new AbortController();res.on('close',()=>{if(!res.writableEnded)ac.abort();});
     let started=false,answer='';
+    const save=async()=>{if(!answer.trim())return;const now=Date.now(),ts=new Date(now);await chats.insertMany([{userId:user._id,convId,role:'user',message,createdAt:ts},{userId:user._id,convId,role:'assistant',message:answer,createdAt:new Date(now+1)}]);if(conv)await convs.updateOne({_id:convId},{$set:{updatedAt:ts}});else await convs.insertOne({_id:convId,userId:user._id,title:message.replace(/^(>.*\n?)+\s*/,'').slice(0,48)||'New chat',createdAt:ts,updatedAt:ts});};
     try{
-     answer=await geminiStream([...hist,{role:'user',parts}],{maxOutputTokens:4096},system,t=>{if(!started){started=true;res.writeHead(200,{'content-type':'text/plain; charset=utf-8','cache-control':'no-store','x-accel-buffering':'no'});}res.write(t);});
-     if(!started){return send(res,502,{error:'Gemini returned an empty answer. Please try again.'});}
-    }catch(err){if(!started)return send(res,502,{error:`Gemini could not answer: ${err.message}`});res.write('\n\n[Connection interrupted. Please ask again.]');res.end();return;}
-    res.end();
-    chats.insertMany([{userId:user._id,role:'user',message,createdAt:new Date()},{userId:user._id,role:'assistant',message:answer,createdAt:new Date(Date.now()+1)}]).catch(console.error);return;
+     await geminiStream([...hist,{role:'user',parts}],{maxOutputTokens:3000},system,t=>{answer+=t;if(!started){started=true;res.writeHead(200,{'content-type':'text/plain; charset=utf-8','cache-control':'no-store','x-accel-buffering':'no','x-conv-id':String(convId)});}res.write(t);},ac.signal);
+     if(!started)return send(res,502,{error:'Gemini returned an empty answer. Please try again.'});
+    }catch(err){
+     if(!started)return send(res,502,{error:`Gemini could not answer: ${err.message}`});
+     if(!ac.signal.aborted){res.write('\n\n[Connection interrupted. Please ask again.]');res.end();}
+     await save().catch(console.error);return;
+    }
+    res.end();await save().catch(console.error);return;
    }
    if(url.pathname==='/api/questions/meta'&&req.method==='GET')return send(res,200,Q.meta());
    if(url.pathname==='/api/questions'&&req.method==='GET'){
@@ -142,8 +171,8 @@ async function start(){
  if(!JWT_SECRET||JWT_SECRET.length<16){console.error('JWT_SECRET is required (at least 16 characters).');process.exitCode=1;return;}
  if(!MONGODB_URI){console.error('MongoDB is required. Add MONGODB_URI to your .env file.');process.exitCode=1;return;}
  client=new MongoClient(MONGODB_URI);await client.connect();db=client.db(DB_NAME);
- users=db.collection('users');attempts=db.collection('attempts');chats=db.collection('chats');documents=db.collection('documents');interviews=db.collection('interviews');
- await Promise.all([users.createIndex({email:1},{unique:true}),attempts.createIndex({userId:1,_id:-1}),chats.createIndex({userId:1,_id:-1}),documents.createIndex({userId:1,_id:-1}),interviews.createIndex({userId:1,_id:-1})]);
+ users=db.collection('users');attempts=db.collection('attempts');chats=db.collection('chats');convs=db.collection('convs');documents=db.collection('documents');interviews=db.collection('interviews');
+ await Promise.all([users.createIndex({email:1},{unique:true}),attempts.createIndex({userId:1,_id:-1}),chats.createIndex({userId:1,_id:-1}),chats.createIndex({convId:1,_id:1}),convs.createIndex({userId:1,updatedAt:-1}),documents.createIndex({userId:1,_id:-1}),interviews.createIndex({userId:1,_id:-1})]);
  await db.command({ping:1});server.listen(PORT,'0.0.0.0',()=>console.log(`Career Sarthii connected to MongoDB and running at http://localhost:${PORT}`));
 }
 start().catch(err=>{console.error('MongoDB connection failed:',err.message);process.exitCode=1;});
