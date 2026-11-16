@@ -50,8 +50,9 @@ This is a runnable local application, not a production deployment. The seeded qu
 - `GEMINI_CHAT_MODEL` default `gemini-3.5-flash-lite` (fastest). If it sends nothing within 8 seconds (`GEMINI_FIRST_TOKEN_MS`) or is busy, the chat automatically tries `gemini-3.6-flash`, then `GEMINI_MODEL` and `GEMINI_FALLBACK_MODELS`.
 - `GEMINI_THINKING` leave empty (minimal for flash-lite, low for others).
 
-## Previous year papers (PYQ) with AI import
+## Previous year papers (PYQ), uploaded by students and shared
 
-- Set `ADMIN_EMAIL` in Render to your login email (comma separated for more). When you log in with it, the PYQ page shows an "Import a paper (admin)" panel at the bottom.
-- Pick the exam in your profile, choose the year, upload the official question paper PDF (and the answer key PDF if separate). Gemini extracts each MCQ with options, the correct answer and a short explanation and saves it in MongoDB (`pyq` collection). Importing the same year again replaces it.
-- Students then see the last 10 years, pick a year, a subject, and attempt the questions. Answers solved by AI (no key supplied) are marked so you can verify them.
+- A student picks the exam year. If the paper is not in the database, they upload the official PDF (and the answer key PDF if separate). Gemini reads it, splits it by subject and saves the MCQs with answers and explanations in MongoDB (`pyq`). From then on every student preparing for that exam gets it directly, no upload needed.
+- Limits: 5 uploads per user per day, a saved paper cannot be overwritten by users, and the AI rejects a PDF that is not the paper for that exam and year.
+- Answers solved by AI (no key supplied) are marked in the quiz. Set `ADMIN_EMAIL` (your login email) in Render so you can delete a bad paper from the subject screen.
+- Profile page: name, gender, category, qualification, exam, bio and photo. Changing qualification unlocks the exams for that level.

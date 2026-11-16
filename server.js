@@ -23,7 +23,7 @@ const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const passwordHash = (password,salt) => crypto.scryptSync(password,salt,64).toString('hex');
 const ADMINS = (process.env.ADMIN_EMAIL || '').toLowerCase().split(',').map(x => x.trim()).filter(Boolean);
 const isAdmin = u => !!u && ADMINS.includes(String(u.email).toLowerCase());
-const safeUser = u => ({name:u.name,gender:u.gender,category:u.category,email:u.email,qual:u.qualification,exam:u.exam,admin:isAdmin(u)});
+const safeUser = u => ({name:u.name,gender:u.gender,category:u.category,email:u.email,qual:u.qualification,exam:u.exam,bio:u.bio||'',avatar:u.avatar||'',admin:isAdmin(u)});
 const mimeTypes={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.svg':'image/svg+xml','.json':'application/json; charset=utf-8','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.ico':'image/x-icon'};
 const send=(res,status,data,headers={})=>{res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store',...headers});res.end(JSON.stringify(data));};
 const readBody=req=>new Promise((resolve,reject)=>{let chunks=[],size=0;req.on('data',c=>{size+=c.length;if(size>12*1024*1024){reject(new Error('Request too large'));req.destroy();return;}chunks.push(c)});req.on('end',()=>{try{resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')||'{}'))}catch{reject(new Error('Invalid JSON'))}});req.on('error',reject)});
@@ -80,20 +80,20 @@ async function geminiStream(contents, config, system, onText, signal) {
   throw lastErr || new Error('No model answered');
 }
 
-const SUBJ_IDS = ['quant', 'reason', 'eng', 'ga'];
+const SUBJ_IDS = ['quant', 'reason', 'eng', 'hindi', 'ga', 'sci'];
 async function runImport(jobId, { exam, examName, year, subject, paper, key }) {
   const setJob = (v) => pyqJobs.updateOne({ _id: jobId }, { $set: v }).catch(console.error);
   try {
     const fixed = SUBJ_IDS.includes(subject) ? subject : null;
-    const prompt = `This PDF is the official question paper of the Indian government exam "${examName}", year ${year}. Extract EVERY multiple choice question exactly as printed (use the English version, ignore the Hindi duplicate). Return ONLY a JSON array. Each item: {"n": question number, "s": ${fixed ? `"${fixed}"` : 'one of "quant" (maths and quantitative aptitude), "reason" (reasoning), "eng" (English), "ga" (general awareness, GK, science, current affairs)'}, "q": question text (include any passage or statements it depends on), "o": array of exactly 4 option texts without the A/B/C/D labels, "a": 0-based index of the correct option, "x": 1 to 2 sentence explanation of why that option is correct, "ai": true only if you had to solve it yourself because no answer key was available}. ${key ? 'An answer key PDF is attached after the paper: use it for "a".' : 'No answer key is attached: solve each question carefully and set "ai" to true.'} Skip questions that depend on a picture or figure you cannot express in words, and questions without 4 options. Never invent questions. No text outside the JSON.`;
+    const prompt = `This PDF is the official question paper of the Indian government exam "${examName}", year ${year}. Extract EVERY multiple choice question exactly as printed (use the English version, ignore the Hindi duplicate). Return ONLY a JSON array. Each item: {"n": question number, "s": ${fixed ? `"${fixed}"` : 'one of "quant" (maths and quantitative aptitude), "reason" (reasoning), "eng" (English), "hindi" (Hindi language), "sci" (general science), "ga" (general awareness, GK, history, polity, geography, current affairs)'}, "q": question text (include any passage or statements it depends on), "o": array of exactly 4 option texts without the A/B/C/D labels, "a": 0-based index of the correct option, "x": 1 to 2 sentence explanation of why that option is correct, "ai": true only if you had to solve it yourself because no answer key was available}. ${key ? 'An answer key PDF is attached after the paper: use it for "a".' : 'No answer key is attached: solve each question carefully and set "ai" to true.'} Skip questions that depend on a picture or figure you cannot express in words, and questions without 4 options. Never invent questions. If this PDF is clearly not the question paper for this exam and year, return an empty array []. No text outside the JSON.`;
     const parts = [{ text: prompt }, { inline_data: { mime_type: 'application/pdf', data: paper } }];
     if (key) parts.push({ text: 'ANSWER KEY:' }, { inline_data: { mime_type: 'application/pdf', data: key } });
     const raw = await gemini([{ role: 'user', parts }], { responseMimeType: 'application/json', maxOutputTokens: 60000 }, null, { timeout: 280000 });
     let list; try { list = JSON.parse(raw); } catch { const a = raw.indexOf('['), b = raw.lastIndexOf(']'); list = JSON.parse(raw.slice(a, b + 1)); }
     const docs = (Array.isArray(list) ? list : []).filter(r => r && typeof r.q === 'string' && Array.isArray(r.o) && r.o.length === 4 && r.o.every(o => typeof o === 'string') && Number.isInteger(r.a) && r.a >= 0 && r.a <= 3)
-      .map((r, i) => ({ exam, year, s: fixed || (SUBJ_IDS.includes(r.s) ? r.s : 'ga'), n: Number(r.n) || i + 1, q: { en: r.q.trim() }, o: { en: r.o.map(o => o.trim()) }, a: r.a, x: { en: String(r.x || 'See the official answer key.').trim() }, ai: !!r.ai || !key, createdAt: new Date() }));
-    if (!docs.length) throw new Error('No questions could be read from this PDF.');
-    await pyqCol.deleteMany(fixed ? { exam, year, s: fixed } : { exam, year });
+      .map((r, i) => ({ exam, year, s: fixed || (SUBJ_IDS.includes(r.s) ? r.s : 'ga'), n: Number(r.n) || i + 1, q: { en: r.q.trim() }, o: { en: r.o.map(o => o.trim()) }, a: r.a, x: { en: String(r.x || 'See the official answer key.').trim() }, ai: !!r.ai || !key, src: 'user', createdAt: new Date() }));
+    if (!docs.length) throw new Error('This does not look like the question paper for this exam and year, or no questions could be read. Please check the file.');
+    if (await pyqCol.findOne({ exam, year })) throw new Error('This paper was just added by someone else.');
     await pyqCol.insertMany(docs);
     await setJob({ status: 'done', count: docs.length, message: `Saved ${docs.length} questions.` });
   } catch (e) { await setJob({ status: 'error', message: e.message }); }
@@ -132,7 +132,18 @@ const server=http.createServer(async(req,res)=>{
    if(url.pathname==='/api/me'&&req.method==='GET'){const u=await requireUser(req,res);if(u)return send(res,200,{user:safeUser(u)});return;}
    const user=await requireUser(req,res);if(!user)return;
    if(url.pathname==='/api/account'&&req.method==='DELETE'){const filter={userId:user._id};await Promise.all([attempts.deleteMany(filter),chats.deleteMany(filter),convs.deleteMany(filter),documents.deleteMany(filter),interviews.deleteMany(filter)]);await users.deleteOne({_id:user._id});return send(res,200,{ok:true},{'Set-Cookie':cookie('',0)});}
-   if(url.pathname==='/api/profile'&&req.method==='PATCH'){const b=await readBody(req);if(!b.exam)return send(res,400,{error:'Choose an exam.'});await users.updateOne({_id:user._id},{$set:{exam:String(b.exam)}});return send(res,200,{ok:true});}
+   if(url.pathname==='/api/profile'&&req.method==='PATCH'){
+    const b=await readBody(req),set={};
+    if(b.name!==undefined){const n=String(b.name).trim();if(n.length<2||n.length>60)return send(res,400,{error:'Enter a name of 2 to 60 characters.'});set.name=n;}
+    if(b.gender!==undefined){if(!['male','female','other'].includes(b.gender))return send(res,400,{error:'Invalid gender.'});set.gender=b.gender;}
+    if(b.category!==undefined){if(!['General','OBC','SC','ST','EWS','Other'].includes(b.category))return send(res,400,{error:'Invalid category.'});set.category=b.category;}
+    if(b.qual!==undefined){if(!['10','12','grad'].includes(b.qual))return send(res,400,{error:'Invalid qualification.'});set.qualification=b.qual;}
+    if(b.exam!==undefined){if(!/^[a-z0-9-]{2,30}$/.test(String(b.exam)))return send(res,400,{error:'Choose an exam.'});set.exam=String(b.exam);}
+    if(b.bio!==undefined)set.bio=String(b.bio).slice(0,300);
+    if(b.avatar!==undefined){const av=String(b.avatar);if(av&&(!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(av)||av.length>120000))return send(res,400,{error:'Photo is too large or not a valid image.'});set.avatar=av;}
+    if(!Object.keys(set).length)return send(res,400,{error:'Nothing to update.'});
+    await users.updateOne({_id:user._id},{$set:set});return send(res,200,{user:safeUser(await users.findOne({_id:user._id}))});
+   }
    if(url.pathname==='/api/attempts'&&req.method==='GET'){const rows=await attempts.find({userId:user._id}).sort({_id:-1}).limit(2000).toArray();return send(res,200,{attempts:rows.map(x=>({exam:x.exam,src:x.src,s:x.s,c:x.c,ok:x.ok,sec:x.sec,ts:x.createdAt}))});}
    if(url.pathname==='/api/attempts'&&req.method==='POST'){const b=await readBody(req),rows=Array.isArray(b.attempts)?b.attempts.slice(0,300):[];if(rows.length)await attempts.insertMany(rows.map(a=>({userId:user._id,exam:String(a.exam||user.exam),src:String(a.src||'quiz'),s:String(a.s||''),c:String(a.c||''),ok:Boolean(a.ok),sec:Math.max(0,Math.min(86400,Number(a.sec)||0)),createdAt:new Date()})));return send(res,201,{saved:rows.length});}
    if(url.pathname==='/api/chats'&&req.method==='GET'){const rows=await chats.find({userId:user._id}).sort({_id:-1}).limit(100).toArray();return send(res,200,{messages:rows.reverse().map(x=>({role:x.role,message:x.message,ts:x.createdAt}))});}
@@ -176,25 +187,29 @@ const server=http.createServer(async(req,res)=>{
    if(url.pathname==='/api/pyq/overview'&&req.method==='GET'){
     const exam=String(url.searchParams.get('exam')||user.exam),now=new Date().getFullYear();
     const rows=[...(await pyqCol.find({exam},{projection:{year:1,s:1}}).toArray()),...Q.pyqList(exam)];
-    return send(res,200,{years:Array.from({length:10},(_,i)=>{const y=now-i,subjects={};rows.filter(r=>r.year===y).forEach(r=>{subjects[r.s]=(subjects[r.s]||0)+1});return{year:y,subjects}})});
+    const run=await pyqJobs.find({exam,status:'running',createdAt:{$gt:new Date(Date.now()-10*60000)}}).toArray();
+    return send(res,200,{years:Array.from({length:10},(_,i)=>{const y=now-i,subjects={};rows.filter(r=>r.year===y).forEach(r=>{subjects[r.s]=(subjects[r.s]||0)+1});return{year:y,subjects,processing:run.some(j=>j.year===y)}})});
    }
    if(url.pathname==='/api/pyq/paper'&&req.method==='GET'){
     const p=url.searchParams,exam=String(p.get('exam')||user.exam),year=Number(p.get('year')),s=p.get('s');
     const rows=[...(await pyqCol.find(s?{exam,year,s}:{exam,year}).toArray()),...Q.pyqList(exam).filter(r=>r.year===year&&(!s||r.s===s))];
     return send(res,200,{questions:rows.sort((a,b)=>(a.n||0)-(b.n||0)).map(r=>({s:r.s,c:r.c||'',q:r.q,o:r.o,a:r.a,x:r.x,ai:!!r.ai}))});
    }
+   if(url.pathname==='/api/pyq/import'&&req.method==='POST'){
+    const b=await readBody(req),exam=String(b.exam||user.exam).toLowerCase(),year=Number(b.year),now=Date.now();
+    if(!/^[a-z0-9-]{2,30}$/.test(exam)||!(year>=2000&&year<=2100)||!b.paper)return send(res,400,{error:'Exam, year and the paper PDF are required.'});
+    if(!GEMINI_API_KEY)return send(res,400,{error:'AI is not configured on the server.'});
+    if(await pyqCol.findOne({exam,year}))return send(res,409,{error:'This paper has already been added. Refresh the page.'});
+    if(await pyqJobs.findOne({exam,year,status:'running',createdAt:{$gt:new Date(now-10*60000)}}))return send(res,409,{error:'Someone is already uploading this paper. Please check again in a few minutes.'});
+    if(!isAdmin(user)&&(await pyqJobs.find({userId:user._id,createdAt:{$gt:new Date(now-86400000)}}).toArray()).length>=5)return send(res,429,{error:'Upload limit reached for today (5 papers). Please try again tomorrow.'});
+    const job=await pyqJobs.insertOne({userId:user._id,exam,year,status:'running',message:'Reading the paper with AI. This can take 1 to 4 minutes.',createdAt:new Date()});
+    runImport(job.insertedId,{exam,examName:String(b.examName||exam).slice(0,60),year,subject:'auto',paper:String(b.paper),key:b.key?String(b.key):null});
+    return send(res,202,{jobId:String(job.insertedId)});
+   }
+   const jm=url.pathname.match(/^\/api\/pyq\/job\/([a-f0-9]{24})$/);
+   if(jm&&req.method==='GET'){const j=await pyqJobs.findOne({_id:new ObjectId(jm[1])});return j&&(String(j.userId)===String(user._id)||isAdmin(user))?send(res,200,{status:j.status,message:j.message,count:j.count||0}):send(res,404,{error:'Job not found.'});}
    if(url.pathname.startsWith('/api/admin/pyq')){
-    if(!isAdmin(user))return send(res,403,{error:'Admin only. Set ADMIN_EMAIL on the server to your login email.'});
-    if(url.pathname==='/api/admin/pyq/import'&&req.method==='POST'){
-     const b=await readBody(req),exam=String(b.exam||'').toLowerCase(),year=Number(b.year);
-     if(!/^[a-z0-9-]{2,30}$/.test(exam)||!(year>=2000&&year<=2100)||!b.paper)return send(res,400,{error:'Exam, year and the paper PDF are required.'});
-     if(!GEMINI_API_KEY)return send(res,400,{error:'GEMINI_API_KEY is not set.'});
-     const job=await pyqJobs.insertOne({userId:user._id,exam,year,status:'running',message:'Reading the paper with AI. This can take 1 to 4 minutes.',createdAt:new Date()});
-     runImport(job.insertedId,{exam,examName:String(b.examName||exam).slice(0,60),year,subject:String(b.subject||'auto'),paper:String(b.paper),key:b.key?String(b.key):null});
-     return send(res,202,{jobId:String(job.insertedId)});
-    }
-    const jm=url.pathname.match(/^\/api\/admin\/pyq\/job\/([a-f0-9]{24})$/);
-    if(jm&&req.method==='GET'){const j=await pyqJobs.findOne({_id:new ObjectId(jm[1])});return j?send(res,200,{status:j.status,message:j.message,count:j.count||0}):send(res,404,{error:'Job not found.'});}
+    if(!isAdmin(user))return send(res,403,{error:'Admin only.'});
     if(url.pathname==='/api/admin/pyq'&&req.method==='DELETE'){const exam=String(url.searchParams.get('exam')||''),year=Number(url.searchParams.get('year'));if(!exam||!year)return send(res,400,{error:'exam and year required'});await pyqCol.deleteMany({exam,year});return send(res,200,{ok:true});}
    }
    if(url.pathname==='/api/questions/meta'&&req.method==='GET')return send(res,200,Q.meta());
