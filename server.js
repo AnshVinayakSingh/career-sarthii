@@ -21,12 +21,14 @@ const jwtSign = (payload, ttl = 14 * 86400) => { const h = b64u(JSON.stringify({
 const jwtVerify = token => { try { const [h, p, sig] = String(token).split('.'); if (!h || !p || !sig) return null; const good = crypto.createHmac('sha256', JWT_SECRET).update(`${h}.${p}`).digest(); const given = Buffer.from(sig, 'base64url'); if (good.length !== given.length || !crypto.timingSafeEqual(good, given)) return null; const data = JSON.parse(Buffer.from(p, 'base64url').toString('utf8')); return data.exp > Date.now() / 1000 ? data : null; } catch { return null; } };
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const passwordHash = (password,salt) => crypto.scryptSync(password,salt,64).toString('hex');
-const safeUser = u => ({name:u.name,gender:u.gender,category:u.category,email:u.email,qual:u.qualification,exam:u.exam});
+const ADMINS = (process.env.ADMIN_EMAIL || '').toLowerCase().split(',').map(x => x.trim()).filter(Boolean);
+const isAdmin = u => !!u && ADMINS.includes(String(u.email).toLowerCase());
+const safeUser = u => ({name:u.name,gender:u.gender,category:u.category,email:u.email,qual:u.qualification,exam:u.exam,admin:isAdmin(u)});
 const mimeTypes={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.svg':'image/svg+xml','.json':'application/json; charset=utf-8','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.ico':'image/x-icon'};
 const send=(res,status,data,headers={})=>{res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store',...headers});res.end(JSON.stringify(data));};
 const readBody=req=>new Promise((resolve,reject)=>{let chunks=[],size=0;req.on('data',c=>{size+=c.length;if(size>12*1024*1024){reject(new Error('Request too large'));req.destroy();return;}chunks.push(c)});req.on('end',()=>{try{resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')||'{}'))}catch{reject(new Error('Invalid JSON'))}});req.on('error',reject)});
 const cookie=(token,age=60*60*24*14)=>`${cookieName}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax;${IS_PROD?' Secure;':''} Max-Age=${age}`;
-let client,db,users,attempts,chats,convs,documents,interviews;
+let client,db,users,attempts,chats,convs,documents,interviews,pyqCol,pyqJobs;
 async function sessionUser(req){const value=(req.headers.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith(cookieName+'='));if(!value)return null;const data=jwtVerify(decodeURIComponent(value.slice(cookieName.length+1)));if(!data||!ObjectId.isValid(data.sub))return null;return users.findOne({_id:new ObjectId(data.sub)});}
 async function requireUser(req,res){const u=await sessionUser(req);if(!u)send(res,401,{error:'Please log in again.'});return u;}
 async function createSession(userId,res){res.setHeader('Set-Cookie',cookie(jwtSign({sub:String(userId)})));}
@@ -43,10 +45,10 @@ const GBASE = process.env.GEMINI_BASE || 'https://generativelanguage.googleapis.
 const gUrl = (model, stream) => `${GBASE}/v1beta/models/${encodeURIComponent(model)}:${stream ? 'streamGenerateContent?alt=sse' : 'generateContent'}`;
 const gHeaders = { 'content-type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY };
 const gText = p => (p.candidates?.[0]?.content?.parts || []).filter(x => !x.thought).map(x => x.text || '').join('');
-async function gemini(contents, config = {}, system) {
+async function gemini(contents, config = {}, system, opts = {}) {
   if (!GEMINI_API_KEY) return null; let lastErr;
   for (const model of MODELS) {
-    const response = await fetch(gUrl(model, false), { method: 'POST', headers: gHeaders, body: gBody(model, contents, config, system), signal: AbortSignal.timeout(35000) }).catch(e => ({ ok: false, status: 0, json: async () => ({ error: { message: e.message } }) }));
+    const response = await fetch(gUrl(model, false), { method: 'POST', headers: gHeaders, body: gBody(model, contents, config, system), signal: AbortSignal.timeout(opts.timeout || 35000) }).catch(e => ({ ok: false, status: 0, json: async () => ({ error: { message: e.message } }) }));
     const payload = await response.json().catch(() => ({}));
     if (response.ok) { const t = gText(payload).trim(); if (t) return t; lastErr = new Error('Empty answer'); continue; }
     lastErr = new Error(payload.error?.message || `Gemini returned ${response.status}`);
@@ -76,6 +78,25 @@ async function geminiStream(contents, config, system, onText, signal) {
     } finally { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); }
   }
   throw lastErr || new Error('No model answered');
+}
+
+const SUBJ_IDS = ['quant', 'reason', 'eng', 'ga'];
+async function runImport(jobId, { exam, examName, year, subject, paper, key }) {
+  const setJob = (v) => pyqJobs.updateOne({ _id: jobId }, { $set: v }).catch(console.error);
+  try {
+    const fixed = SUBJ_IDS.includes(subject) ? subject : null;
+    const prompt = `This PDF is the official question paper of the Indian government exam "${examName}", year ${year}. Extract EVERY multiple choice question exactly as printed (use the English version, ignore the Hindi duplicate). Return ONLY a JSON array. Each item: {"n": question number, "s": ${fixed ? `"${fixed}"` : 'one of "quant" (maths and quantitative aptitude), "reason" (reasoning), "eng" (English), "ga" (general awareness, GK, science, current affairs)'}, "q": question text (include any passage or statements it depends on), "o": array of exactly 4 option texts without the A/B/C/D labels, "a": 0-based index of the correct option, "x": 1 to 2 sentence explanation of why that option is correct, "ai": true only if you had to solve it yourself because no answer key was available}. ${key ? 'An answer key PDF is attached after the paper: use it for "a".' : 'No answer key is attached: solve each question carefully and set "ai" to true.'} Skip questions that depend on a picture or figure you cannot express in words, and questions without 4 options. Never invent questions. No text outside the JSON.`;
+    const parts = [{ text: prompt }, { inline_data: { mime_type: 'application/pdf', data: paper } }];
+    if (key) parts.push({ text: 'ANSWER KEY:' }, { inline_data: { mime_type: 'application/pdf', data: key } });
+    const raw = await gemini([{ role: 'user', parts }], { responseMimeType: 'application/json', maxOutputTokens: 60000 }, null, { timeout: 280000 });
+    let list; try { list = JSON.parse(raw); } catch { const a = raw.indexOf('['), b = raw.lastIndexOf(']'); list = JSON.parse(raw.slice(a, b + 1)); }
+    const docs = (Array.isArray(list) ? list : []).filter(r => r && typeof r.q === 'string' && Array.isArray(r.o) && r.o.length === 4 && r.o.every(o => typeof o === 'string') && Number.isInteger(r.a) && r.a >= 0 && r.a <= 3)
+      .map((r, i) => ({ exam, year, s: fixed || (SUBJ_IDS.includes(r.s) ? r.s : 'ga'), n: Number(r.n) || i + 1, q: { en: r.q.trim() }, o: { en: r.o.map(o => o.trim()) }, a: r.a, x: { en: String(r.x || 'See the official answer key.').trim() }, ai: !!r.ai || !key, createdAt: new Date() }));
+    if (!docs.length) throw new Error('No questions could be read from this PDF.');
+    await pyqCol.deleteMany(fixed ? { exam, year, s: fixed } : { exam, year });
+    await pyqCol.insertMany(docs);
+    await setJob({ status: 'done', count: docs.length, message: `Saved ${docs.length} questions.` });
+  } catch (e) { await setJob({ status: 'error', message: e.message }); }
 }
 const localFeedback = (answers, lg) => answers.map((a, i) => { const w = String(a.a || '').split(/\s+/).filter(Boolean).length; const tips = []; if (w < 20) tips.push(lg === 'hi' ? 'उत्तर बहुत छोटा है, कम से कम 3 से 4 वाक्य बोलें।' : 'Answer is very short; aim for at least 3 to 4 sentences.'); else if (w > 150) tips.push(lg === 'hi' ? 'उत्तर लंबा है, मुख्य बिंदुओं पर टिके रहें।' : 'Answer is long; keep to the main points.'); if (!/\d|for example|such as|उदाहरण|जैसे/i.test(a.a || '')) tips.push(lg === 'hi' ? 'एक उदाहरण या तथ्य जोड़ें।' : 'Add one specific example or fact.'); if (!tips.length) tips.push(lg === 'hi' ? 'उत्तर संतुलित है। अंत में एक संक्षिप्त निष्कर्ष जोड़ें।' : 'Good length. End with a short closing line.'); return `${i + 1}. ${tips.join(' ')}`; }).join('\n') + '\n\n' + (lg === 'hi' ? '(AI फीडबैक के लिए GEMINI_API_KEY जोड़ें।)' : '(Add GEMINI_API_KEY for detailed AI feedback.)');
 const seededPaper=()=>[
@@ -152,6 +173,30 @@ const server=http.createServer(async(req,res)=>{
     }
     res.end();await save().catch(console.error);return;
    }
+   if(url.pathname==='/api/pyq/overview'&&req.method==='GET'){
+    const exam=String(url.searchParams.get('exam')||user.exam),now=new Date().getFullYear();
+    const rows=[...(await pyqCol.find({exam},{projection:{year:1,s:1}}).toArray()),...Q.pyqList(exam)];
+    return send(res,200,{years:Array.from({length:10},(_,i)=>{const y=now-i,subjects={};rows.filter(r=>r.year===y).forEach(r=>{subjects[r.s]=(subjects[r.s]||0)+1});return{year:y,subjects}})});
+   }
+   if(url.pathname==='/api/pyq/paper'&&req.method==='GET'){
+    const p=url.searchParams,exam=String(p.get('exam')||user.exam),year=Number(p.get('year')),s=p.get('s');
+    const rows=[...(await pyqCol.find(s?{exam,year,s}:{exam,year}).toArray()),...Q.pyqList(exam).filter(r=>r.year===year&&(!s||r.s===s))];
+    return send(res,200,{questions:rows.sort((a,b)=>(a.n||0)-(b.n||0)).map(r=>({s:r.s,c:r.c||'',q:r.q,o:r.o,a:r.a,x:r.x,ai:!!r.ai}))});
+   }
+   if(url.pathname.startsWith('/api/admin/pyq')){
+    if(!isAdmin(user))return send(res,403,{error:'Admin only. Set ADMIN_EMAIL on the server to your login email.'});
+    if(url.pathname==='/api/admin/pyq/import'&&req.method==='POST'){
+     const b=await readBody(req),exam=String(b.exam||'').toLowerCase(),year=Number(b.year);
+     if(!/^[a-z0-9-]{2,30}$/.test(exam)||!(year>=2000&&year<=2100)||!b.paper)return send(res,400,{error:'Exam, year and the paper PDF are required.'});
+     if(!GEMINI_API_KEY)return send(res,400,{error:'GEMINI_API_KEY is not set.'});
+     const job=await pyqJobs.insertOne({userId:user._id,exam,year,status:'running',message:'Reading the paper with AI. This can take 1 to 4 minutes.',createdAt:new Date()});
+     runImport(job.insertedId,{exam,examName:String(b.examName||exam).slice(0,60),year,subject:String(b.subject||'auto'),paper:String(b.paper),key:b.key?String(b.key):null});
+     return send(res,202,{jobId:String(job.insertedId)});
+    }
+    const jm=url.pathname.match(/^\/api\/admin\/pyq\/job\/([a-f0-9]{24})$/);
+    if(jm&&req.method==='GET'){const j=await pyqJobs.findOne({_id:new ObjectId(jm[1])});return j?send(res,200,{status:j.status,message:j.message,count:j.count||0}):send(res,404,{error:'Job not found.'});}
+    if(url.pathname==='/api/admin/pyq'&&req.method==='DELETE'){const exam=String(url.searchParams.get('exam')||''),year=Number(url.searchParams.get('year'));if(!exam||!year)return send(res,400,{error:'exam and year required'});await pyqCol.deleteMany({exam,year});return send(res,200,{ok:true});}
+   }
    if(url.pathname==='/api/questions/meta'&&req.method==='GET')return send(res,200,Q.meta());
    if(url.pathname==='/api/questions'&&req.method==='GET'){
     const p=url.searchParams,n=Math.max(1,Math.min(100,Number(p.get('n'))||20)),seed=Number(p.get('seed'))||Math.floor(Math.random()*1e9);
@@ -172,8 +217,8 @@ async function start(){
  if(!JWT_SECRET||JWT_SECRET.length<16){console.error('JWT_SECRET is required (at least 16 characters).');process.exitCode=1;return;}
  if(!MONGODB_URI){console.error('MongoDB is required. Add MONGODB_URI to your .env file.');process.exitCode=1;return;}
  client=new MongoClient(MONGODB_URI);await client.connect();db=client.db(DB_NAME);
- users=db.collection('users');attempts=db.collection('attempts');chats=db.collection('chats');convs=db.collection('convs');documents=db.collection('documents');interviews=db.collection('interviews');
- await Promise.all([users.createIndex({email:1},{unique:true}),attempts.createIndex({userId:1,_id:-1}),chats.createIndex({userId:1,_id:-1}),chats.createIndex({convId:1,_id:1}),convs.createIndex({userId:1,updatedAt:-1}),documents.createIndex({userId:1,_id:-1}),interviews.createIndex({userId:1,_id:-1})]);
+ users=db.collection('users');attempts=db.collection('attempts');chats=db.collection('chats');convs=db.collection('convs');pyqCol=db.collection('pyq');pyqJobs=db.collection('pyqjobs');documents=db.collection('documents');interviews=db.collection('interviews');
+ await Promise.all([users.createIndex({email:1},{unique:true}),attempts.createIndex({userId:1,_id:-1}),chats.createIndex({userId:1,_id:-1}),chats.createIndex({convId:1,_id:1}),convs.createIndex({userId:1,updatedAt:-1}),pyqCol.createIndex({exam:1,year:1,s:1}),documents.createIndex({userId:1,_id:-1}),interviews.createIndex({userId:1,_id:-1})]);
  await db.command({ping:1});server.listen(PORT,'0.0.0.0',()=>console.log(`Career Sarthii connected to MongoDB and running at http://localhost:${PORT}`));
 }
 start().catch(err=>{console.error('MongoDB connection failed:',err.message);process.exitCode=1;});

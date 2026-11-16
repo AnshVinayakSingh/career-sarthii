@@ -49,3 +49,9 @@ This is a runnable local application, not a production deployment. The seeded qu
 
 - `GEMINI_CHAT_MODEL` default `gemini-3.5-flash-lite` (fastest). If it sends nothing within 8 seconds (`GEMINI_FIRST_TOKEN_MS`) or is busy, the chat automatically tries `gemini-3.6-flash`, then `GEMINI_MODEL` and `GEMINI_FALLBACK_MODELS`.
 - `GEMINI_THINKING` leave empty (minimal for flash-lite, low for others).
+
+## Previous year papers (PYQ) with AI import
+
+- Set `ADMIN_EMAIL` in Render to your login email (comma separated for more). When you log in with it, the PYQ page shows an "Import a paper (admin)" panel at the bottom.
+- Pick the exam in your profile, choose the year, upload the official question paper PDF (and the answer key PDF if separate). Gemini extracts each MCQ with options, the correct answer and a short explanation and saves it in MongoDB (`pyq` collection). Importing the same year again replaces it.
+- Students then see the last 10 years, pick a year, a subject, and attempt the questions. Answers solved by AI (no key supplied) are marked so you can verify them.

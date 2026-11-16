@@ -24,7 +24,7 @@ function runQuiz(el,qs,done){
   el.innerHTML=`<div class="qhead"><span>${i+1} ${t('q.of')} ${qs.length}</span><span class="timer" id="qt">${fmt((frozen??(Date.now()-start))/1000)}</span></div>
   <h3 class="qtext">${esc(L(q.q))}</h3>
   <div>${L(q.o).map((o,k)=>{let c='opt';if(picked!==null){if(k===q.a)c+=' correct';else if(k===picked)c+=' wrong'}return`<button class="${c}" data-k="${k}" ${picked!==null?'disabled':''}>${esc(o)}</button>`}).join('')}</div>
-  ${picked===null?'':(picked===q.a?`<div class="fb ok"><b>${t('q.correct')}</b></div>`:`<div class="fb no"><b>${t('q.wrong')} ${esc(L(q.o)[q.a])}</b><b style="margin-top:8px">${t('q.exp')}</b>${esc(L(q.x))}</div>`)}
+  ${picked===null?'':`<div class="fb ${picked===q.a?'ok':'no'}"><b>${picked===q.a?t('q.correct'):t('q.wrong')+' '+esc(L(q.o)[q.a])}</b><b style="margin-top:8px">${t('q.exp')}</b>${esc(L(q.x))}${q.ai?`<br><i style="opacity:.7">${t('pyq.ai')}</i>`:''}</div>`}
   ${picked===null?'':`<button class="btn" id="nx">${i===qs.length-1?t('q.finish'):t('q.next')}</button>`}`;
   el.querySelectorAll('.opt').forEach(b=>b.onclick=()=>{frozen=Date.now()-start;picked=+b.dataset.k;res.push({s:qs[i].s,c:qs[i].c,ok:picked===qs[i].a,sec:Math.round(frozen/1000)});draw()});
   const nx=el.querySelector('#nx');if(nx)nx.onclick=()=>{if(i===qs.length-1){clearT();saveAtt(res.map(r=>Object.assign({src:'quiz'},r)));done(res)}else{i++;picked=null;frozen=null;start=Date.now();draw()}};
@@ -100,11 +100,29 @@ chat(){
 },
 
 pyq(){
- const real=((window.__meta||{}).pyq||{})[me.exam]||[];
- view.innerHTML=`${head('pyq.t','pyq.d')}<h3>${esc(exam().n)}</h3><div class="row2" style="max-width:420px;align-items:end"><div class="field" style="margin:0"><label for="yr">${t('q.year')}</label><select id="yr">${real.map(y=>`<option value="y${y}">${y} (official)</option>`).join('')}${[1,2,3,4,5].map(n=>`<option value="s${n}">Practice set ${n}</option>`).join('')}</select></div><div><button class="btn" id="go">${t('q.start')}</button></div></div><p class="hint" style="margin-top:12px">${t('q.sample')}</p><div id="box" style="margin-top:24px"></div>`;
- if(!window.__meta)api('/questions/meta').then(m=>{window.__meta=m;if(((m.pyq||{})[me.exam]||[]).length&&location.hash==='#pyq')pyq()}).catch(()=>{});
- const box=view.querySelector('#box');
- view.querySelector('#go').onclick=async()=>{clearT();const v=view.querySelector('#yr').value;box.textContent=t('model.busy');try{const start=async()=>{const qs=await qapi(v[0]==='y'?'/questions?year='+v.slice(1):'/questions?n=20&seed='+(+v.slice(1)*7919+Date.now()%1000));if(!qs.length){box.innerHTML=`<div class="notice">${t('chap.soon')}</div>`;return}runQuiz(box,qs,res=>summary(box,res,start))};await start()}catch(e){box.textContent=e.message}};
+ view.innerHTML=`${head('pyq.t','pyq.d')}<h3>${esc(exam().n)}</h3><div id="box" style="margin-top:16px"></div>${me.admin?'<div id="adm"></div>':''}`;
+ const box=view.querySelector('#box');let ov=null;
+ const sname=id=>{const x=SUBJECTS.find(v=>v.id===id);return x?L(x):id};
+ const years=()=>{if(!ov){box.textContent=t('model.busy');return}const any=ov.years.some(y=>Object.keys(y.subjects).length);
+  box.innerHTML=(any?'':`<div class="notice">${t('pyq.none')}</div>`)+`<p class="hint">${t('pyq.pick')}</p><div class="yrs">${ov.years.map(y=>{const n=Object.values(y.subjects).reduce((p,c)=>p+c,0);return`<button class="yr" data-y="${y.year}" ${n?'':'disabled'}><b>${y.year}</b><span>${n?n+' '+t('pyq.q'):t('pyq.na')}</span></button>`}).join('')}</div>`;
+  box.querySelectorAll('.yr:not([disabled])').forEach(b=>b.onclick=()=>subjects(ov.years.find(y=>y.year===+b.dataset.y)))};
+ const subjects=y=>{clearT();const ent=Object.entries(y.subjects),tot=ent.reduce((p,[,n])=>p+n,0);
+  box.innerHTML=`<button class="tbtn" id="bk" type="button">\u2190 ${t('pyq.back')}</button><h3 style="margin:14px 0 4px">${esc(exam().n)} ${y.year}</h3><p class="hint">${t('pyq.sub')}</p><div class="list">${ent.map(([s,n])=>`<button data-s="${s}"><b style="font-weight:500">${esc(sname(s))}</b><span>${n} ${t('pyq.q')}</span></button>`).join('')}${ent.length>1?`<button data-s="all"><b style="font-weight:500">${t('pyq.full')}</b><span>${tot} ${t('pyq.q')}</span></button>`:''}</div><div id="qb" style="margin-top:22px"></div>`;
+  box.querySelector('#bk').onclick=()=>{clearT();years()};
+  const go=async s=>{const qb=box.querySelector('#qb');clearT();qb.textContent=t('model.busy');try{const r=await api('/pyq/paper?exam='+encodeURIComponent(me.exam)+'&year='+y.year+(s==='all'?'':'&s='+s));if(!r.questions.length){qb.innerHTML=`<div class="notice">${t('pyq.none')}</div>`;return}runQuiz(qb,r.questions,res=>summary(qb,res,()=>go(s)));qb.scrollIntoView({behavior:'smooth',block:'start'})}catch(e){qb.textContent=e.message}};
+  box.querySelectorAll('.list button').forEach(b=>b.onclick=()=>go(b.dataset.s))};
+ const refresh=()=>api('/pyq/overview?exam='+encodeURIComponent(me.exam)).then(r=>{ov=r;years()}).catch(e=>{box.textContent=e.message});
+ years();refresh();
+ const adm=view.querySelector('#adm');if(!adm)return;
+ const now=new Date().getFullYear();
+ adm.innerHTML=`<hr style="margin:32px 0 18px;border:0;border-top:1px solid var(--line)"><h3>Import a paper (admin)</h3><p class="hint">Upload the official question paper PDF, and its answer key PDF if it is separate. AI reads it and saves the MCQs with answers and explanations for ${esc(exam().n)}. Keep the files under about 8 MB in total. Importing a year again replaces the old data.</p><div class="row2"><div class="field"><label for="ay">Year</label><select id="ay">${Array.from({length:10},(_,i)=>`<option>${now-i}</option>`).join('')}</select></div><div class="field"><label for="as">Subject</label><select id="as"><option value="auto">Auto detect (mixed paper)</option>${SUBJECTS.map(x=>`<option value="${x.id}">${esc(L(x))}</option>`).join('')}</select></div></div><div class="field"><label for="af">Question paper PDF</label><input type="file" id="af" accept="application/pdf"></div><div class="field"><label for="ak">Answer key PDF (optional)</label><input type="file" id="ak" accept="application/pdf"></div><div class="acts"><button class="btn" id="aim" type="button">Import with AI</button><button class="btn ghost" id="adl" type="button">Delete this year</button></div><p class="hint" id="am"></p>`;
+ const am=adm.querySelector('#am'),b64=f=>new Promise((ok,no)=>{const r=new FileReader();r.onload=()=>ok(String(r.result).split(',')[1]);r.onerror=no;r.readAsDataURL(f)});
+ adm.querySelector('#adl').onclick=async()=>{const y=adm.querySelector('#ay').value;if(!confirm('Delete all '+exam().n+' '+y+' questions?'))return;try{await api('/admin/pyq?exam='+encodeURIComponent(me.exam)+'&year='+y,{method:'DELETE'});am.textContent='Deleted.';refresh()}catch(e){am.textContent=e.message}};
+ adm.querySelector('#aim').onclick=async()=>{const f=adm.querySelector('#af').files[0],k=adm.querySelector('#ak').files[0];if(!f){am.textContent='Choose the question paper PDF first.';return}if(f.size+(k?k.size:0)>8*1024*1024){am.textContent='Files are too large. Keep the total under 8 MB.';return}
+  const btn=adm.querySelector('#aim');btn.disabled=true;am.textContent='Uploading...';
+  try{const r=await api('/admin/pyq/import',{method:'POST',body:JSON.stringify({exam:me.exam,examName:exam().n,year:+adm.querySelector('#ay').value,subject:adm.querySelector('#as').value,paper:await b64(f),key:k?await b64(k):null})});
+   const poll=async()=>{if(!document.body.contains(am))return;const j=await api('/admin/pyq/job/'+r.jobId);am.textContent=j.message;if(j.status==='running'){setTimeout(poll,3000)}else{btn.disabled=false;if(j.status==='done')refresh()}};poll()}
+  catch(e){am.textContent=e.message;btn.disabled=false}};
 },
 
 model(){

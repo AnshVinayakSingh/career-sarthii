@@ -112,4 +112,5 @@ const mix = (n, seed) => { const k = Math.max(1, Math.round(n / 4)); const g = m
 const paper = (n, seed) => { const a = Math.round(n * .3), b = Math.round(n * .3), c = Math.round(n * .2); const g = mk(rng(seed)); return g.shuffle([...fromPool(QUANT, a, seed), ...fromPool(REASON, b, seed + 11), ...fromPool(ENG, c, seed + 22), ...fromPool(GA, n - a - b - c, seed + 33)]); };
 const meta = () => { const chapters = {}; Object.keys(SUBJ).forEach(c => (chapters[c] = GEN[c] ? -1 : (byChapter[c] || []).length)); return { chapters, pyq: pyqYears() }; };
 
-module.exports = { forChapter, mix, paper, meta, pyqFor, loadPyq };
+const pyqList = exam => PYQ.filter(p => p.exam === exam);
+module.exports = { forChapter, mix, paper, meta, pyqFor, pyqList, loadPyq };
