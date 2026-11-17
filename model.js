@@ -119,17 +119,21 @@ Return ONLY a JSON array of exactly ${n} objects with keys in this order: {"q": 
         arr.forEach(q => questions.push({ s: s.id, q: { en: q.q }, o: { en: q.o }, a: q.a, x: { en: q.x }, t: q.t }));
       });
       questions.forEach((q, i) => { q.n = i + 1; });
+      await set({ message: 'Translating to Hindi...', progress: questions.length });
+      await ensureHi({ _id: id, questions });
       await set({ status: 'ready', questions, subjects, message: '', answers: questions.map(() => null), spent: questions.map(() => 0) });
     } catch (e) { await set({ status: 'error', message: String(e.message || e).slice(0, 300) }); }
   }
 
   async function ensureHi(doc) {
     const skip = new Set(['eng', 'hindi']);
-    const need = []; doc.questions.forEach((q, i) => { if (!skip.has(q.s) && !q.q.hi) need.push(i); });
-    if (!need.length) return;
-    const res = await ctx.translateItems(need.map(i => ({ q: doc.questions[i].q.en, o: doc.questions[i].o.en, x: doc.questions[i].x.en || '' }))).catch(() => null);
-    if (!res) return;
-    need.forEach((i, k) => { const v = res[k]; if (v) { const q = doc.questions[i]; q.q.hi = v.q; q.o.hi = v.o; q.x.hi = v.x; } });
+    for (let round = 0; round < 3; round++) {
+      const need = []; doc.questions.forEach((q, i) => { if (!skip.has(q.s) && !q.q.hi) need.push(i); });
+      if (!need.length) break;
+      const res = await ctx.translateItems(need.map(i => ({ q: doc.questions[i].q.en, o: doc.questions[i].o.en, x: doc.questions[i].x.en || '' }))).catch(() => null);
+      if (!res) continue;
+      need.forEach((i, k) => { const v = res[k]; if (v) { const q = doc.questions[i]; q.q.hi = v.q; q.o.hi = v.o; q.x.hi = v.x; } });
+    }
     await ctx.modelCol.updateOne({ _id: doc._id }, { $set: { questions: doc.questions } }).catch(() => {});
   }
 
