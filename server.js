@@ -22,13 +22,14 @@ const jwtVerify = token => { try { const [h, p, sig] = String(token).split('.');
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const passwordHash = (password,salt) => crypto.scryptSync(password,salt,64).toString('hex');
 const ADMINS = (process.env.ADMIN_EMAIL || '').toLowerCase().split(',').map(x => x.trim()).filter(Boolean);
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 const isAdmin = u => !!u && ADMINS.includes(String(u.email).toLowerCase());
 const safeUser = u => ({name:u.name,gender:u.gender,category:u.category,email:u.email,qual:u.qualification,exam:u.exam,bio:u.bio||'',avatar:u.avatar||'',admin:isAdmin(u)});
 const mimeTypes={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.svg':'image/svg+xml','.json':'application/json; charset=utf-8','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.ico':'image/x-icon'};
 const send=(res,status,data,headers={})=>{res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store',...headers});res.end(JSON.stringify(data));};
 const readBody=req=>new Promise((resolve,reject)=>{let chunks=[],size=0;req.on('data',c=>{size+=c.length;if(size>12*1024*1024){reject(new Error('Request too large'));req.destroy();return;}chunks.push(c)});req.on('end',()=>{try{resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')||'{}'))}catch{reject(new Error('Invalid JSON'))}});req.on('error',reject)});
 const cookie=(token,age=60*60*24*14)=>`${cookieName}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax;${IS_PROD?' Secure;':''} Max-Age=${age}`;
-let client,db,users,attempts,chats,convs,documents,interviews,pyqCol,pyqJobs;
+let client,db,users,attempts,chats,convs,documents,interviews,pyqCol,pyqJobs,pyqReports;
 async function sessionUser(req){const value=(req.headers.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith(cookieName+'='));if(!value)return null;const data=jwtVerify(decodeURIComponent(value.slice(cookieName.length+1)));if(!data||!ObjectId.isValid(data.sub))return null;return users.findOne({_id:new ObjectId(data.sub)});}
 async function requireUser(req,res){const u=await sessionUser(req);if(!u)send(res,401,{error:'Please log in again.'});return u;}
 async function createSession(userId,res){res.setHeader('Set-Cookie',cookie(jwtSign({sub:String(userId)})));}
@@ -81,19 +82,19 @@ async function geminiStream(contents, config, system, onText, signal) {
 }
 
 const SUBJ_IDS = ['quant', 'reason', 'eng', 'hindi', 'ga', 'sci'];
-async function runImport(jobId, { exam, examName, year, subject, paper, key }) {
+async function runImport(jobId, { exam, examName, year, label, subject, paper, key }) {
   const setJob = (v) => pyqJobs.updateOne({ _id: jobId }, { $set: v }).catch(console.error);
   try {
     const fixed = SUBJ_IDS.includes(subject) ? subject : null;
-    const prompt = `This PDF is the official question paper of the Indian government exam "${examName}", year ${year}. Extract EVERY multiple choice question exactly as printed (use the English version, ignore the Hindi duplicate). Return ONLY a JSON array. Each item: {"n": question number, "s": ${fixed ? `"${fixed}"` : 'one of "quant" (maths and quantitative aptitude), "reason" (reasoning), "eng" (English), "hindi" (Hindi language), "sci" (general science), "ga" (general awareness, GK, history, polity, geography, current affairs)'}, "q": question text (include any passage or statements it depends on), "o": array of exactly 4 option texts without the A/B/C/D labels, "a": 0-based index of the correct option, "x": 1 to 2 sentence explanation of why that option is correct, "ai": true only if you had to solve it yourself because no answer key was available}. ${key ? 'An answer key PDF is attached after the paper: use it for "a".' : 'No answer key is attached: solve each question carefully and set "ai" to true.'} Skip questions that depend on a picture or figure you cannot express in words, and questions without 4 options. Never invent questions. If this PDF is clearly not the question paper for this exam and year, return an empty array []. No text outside the JSON.`;
+    const prompt = `This PDF is the official question paper of the Indian government exam "${examName}", year ${year} (${label}). Extract EVERY multiple choice question exactly as printed (use the English version, ignore the Hindi duplicate). Return ONLY a JSON array. Each item: {"n": question number, "s": ${fixed ? `"${fixed}"` : 'one of "quant" (maths and quantitative aptitude), "reason" (reasoning), "eng" (English), "hindi" (Hindi language), "sci" (general science), "ga" (general awareness, GK, history, polity, geography, current affairs)'}, "q": question text (include any passage or statements it depends on), "o": array of exactly 4 option texts without the A/B/C/D labels, "a": 0-based index of the correct option, "x": a detailed explanation of 3 to 6 sentences: for maths and reasoning show the full step by step working and the formula used; for English and general awareness explain the concept or fact behind the answer and briefly say why the other options are wrong, "ai": true only if you had to solve it yourself because no answer key was available}. ${key ? 'An answer key PDF is attached after the paper: use it for "a".' : 'No answer key is attached: solve each question carefully and set "ai" to true.'} Skip questions that depend on a picture or figure you cannot express in words, and questions without 4 options. Never invent questions. If this PDF is clearly not the question paper for this exam and year, return an empty array []. No text outside the JSON.`;
     const parts = [{ text: prompt }, { inline_data: { mime_type: 'application/pdf', data: paper } }];
     if (key) parts.push({ text: 'ANSWER KEY:' }, { inline_data: { mime_type: 'application/pdf', data: key } });
     const raw = await gemini([{ role: 'user', parts }], { responseMimeType: 'application/json', maxOutputTokens: 60000 }, null, { timeout: 280000 });
     let list; try { list = JSON.parse(raw); } catch { const a = raw.indexOf('['), b = raw.lastIndexOf(']'); list = JSON.parse(raw.slice(a, b + 1)); }
     const docs = (Array.isArray(list) ? list : []).filter(r => r && typeof r.q === 'string' && Array.isArray(r.o) && r.o.length === 4 && r.o.every(o => typeof o === 'string') && Number.isInteger(r.a) && r.a >= 0 && r.a <= 3)
-      .map((r, i) => ({ exam, year, s: fixed || (SUBJ_IDS.includes(r.s) ? r.s : 'ga'), n: Number(r.n) || i + 1, q: { en: r.q.trim() }, o: { en: r.o.map(o => o.trim()) }, a: r.a, x: { en: String(r.x || 'See the official answer key.').trim() }, ai: !!r.ai || !key, src: 'user', createdAt: new Date() }));
+      .map((r, i) => ({ exam, year, paper: label, s: fixed || (SUBJ_IDS.includes(r.s) ? r.s : 'ga'), n: Number(r.n) || i + 1, q: { en: r.q.trim() }, o: { en: r.o.map(o => o.trim()) }, a: r.a, x: { en: String(r.x || 'See the official answer key.').trim() }, ai: !!r.ai || !key, src: 'user', createdAt: new Date() }));
     if (!docs.length) throw new Error('This does not look like the question paper for this exam and year, or no questions could be read. Please check the file.');
-    if (await pyqCol.findOne({ exam, year })) throw new Error('This paper was just added by someone else.');
+    if (await pyqCol.findOne({ exam, year, paper: label })) throw new Error('This paper was just added by someone else.');
     await pyqCol.insertMany(docs);
     await setJob({ status: 'done', count: docs.length, message: `Saved ${docs.length} questions.` });
   } catch (e) { await setJob({ status: 'error', message: e.message }); }
@@ -124,7 +125,14 @@ const server=http.createServer(async(req,res)=>{
     const u=await users.findOne({_id:result.insertedId});await createSession(u._id,res);return send(res,201,{user:safeUser(u)});
    }
    if(req.method==='POST'&&url.pathname==='/api/login'){
-    const b=await readBody(req),email=String(b.email||'').trim().toLowerCase(),password=String(b.pass||''),u=await users.findOne({email});
+    const b=await readBody(req),email=String(b.email||'').trim().toLowerCase(),password=String(b.pass||'');let u=await users.findOne({email});
+    const sha=x=>crypto.createHash('sha256').update(String(x)).digest();
+    if(ADMIN_PASSWORD&&ADMINS.includes(email)&&crypto.timingSafeEqual(sha(password),sha(ADMIN_PASSWORD))){
+     const salt=crypto.randomBytes(16).toString('hex'),passHash=passwordHash(password,salt);
+     if(!u){await users.insertOne({name:'Admin',gender:'male',category:'General',email,passHash,passSalt:salt,qualification:'grad',exam:'ssc-cgl',createdAt:new Date()});u=await users.findOne({email});}
+     else{let same=false;try{same=crypto.timingSafeEqual(Buffer.from(passwordHash(password,u.passSalt),'hex'),Buffer.from(u.passHash,'hex'))}catch{}if(!same){await users.updateOne({_id:u._id},{$set:{passHash,passSalt:salt}});u=await users.findOne({_id:u._id});}}
+     await createSession(u._id,res);return send(res,200,{user:safeUser(u)});
+    }
     if(!u||!crypto.timingSafeEqual(Buffer.from(passwordHash(password,u.passSalt),'hex'),Buffer.from(u.passHash,'hex')))return send(res,401,{error:'Email or password is incorrect.'});
     await createSession(u._id,res);return send(res,200,{user:safeUser(u)});
    }
@@ -186,31 +194,46 @@ const server=http.createServer(async(req,res)=>{
    }
    if(url.pathname==='/api/pyq/overview'&&req.method==='GET'){
     const exam=String(url.searchParams.get('exam')||user.exam),now=new Date().getFullYear();
-    const rows=[...(await pyqCol.find({exam},{projection:{year:1,s:1}}).toArray()),...Q.pyqList(exam)];
+    const rows=[...(await pyqCol.find({exam},{projection:{year:1,s:1,paper:1}}).toArray()),...Q.pyqList(exam)];
     const run=await pyqJobs.find({exam,status:'running',createdAt:{$gt:new Date(Date.now()-10*60000)}}).toArray();
-    return send(res,200,{years:Array.from({length:10},(_,i)=>{const y=now-i,subjects={};rows.filter(r=>r.year===y).forEach(r=>{subjects[r.s]=(subjects[r.s]||0)+1});return{year:y,subjects,processing:run.some(j=>j.year===y)}})});
+    return send(res,200,{years:Array.from({length:10},(_,i)=>{const y=now-i,map={};rows.filter(r=>r.year===y).forEach(r=>{const l=r.paper||'Paper 1';map[l]=map[l]||{};map[l][r.s]=(map[l][r.s]||0)+1});return{year:y,papers:Object.entries(map).map(([label,subjects])=>({label,subjects})),processing:run.filter(j=>j.year===y).map(j=>j.label||'Paper 1')}})});
    }
    if(url.pathname==='/api/pyq/paper'&&req.method==='GET'){
-    const p=url.searchParams,exam=String(p.get('exam')||user.exam),year=Number(p.get('year')),s=p.get('s');
-    const rows=[...(await pyqCol.find(s?{exam,year,s}:{exam,year}).toArray()),...Q.pyqList(exam).filter(r=>r.year===year&&(!s||r.s===s))];
+    const p=url.searchParams,exam=String(p.get('exam')||user.exam),year=Number(p.get('year')),s=p.get('s'),label=p.get('label')||'Paper 1';
+    const rows=[...(await pyqCol.find(s?{exam,year,s}:{exam,year}).toArray()),...Q.pyqList(exam).filter(r=>r.year===year&&(!s||r.s===s))].filter(r=>(r.paper||'Paper 1')===label);
     return send(res,200,{questions:rows.sort((a,b)=>(a.n||0)-(b.n||0)).map(r=>({s:r.s,c:r.c||'',q:r.q,o:r.o,a:r.a,x:r.x,ai:!!r.ai}))});
    }
    if(url.pathname==='/api/pyq/import'&&req.method==='POST'){
-    const b=await readBody(req),exam=String(b.exam||user.exam).toLowerCase(),year=Number(b.year),now=Date.now();
-    if(!/^[a-z0-9-]{2,30}$/.test(exam)||!(year>=2000&&year<=2100)||!b.paper)return send(res,400,{error:'Exam, year and the paper PDF are required.'});
+    const b=await readBody(req),exam=String(b.exam||user.exam).toLowerCase(),year=Number(b.year),label=String(b.label||'Paper 1').trim().slice(0,30)||'Paper 1',now=Date.now();
+    if(!/^[a-z0-9-]{2,30}$/.test(exam)||!(year>=2000&&year<=2100)||!b.file)return send(res,400,{error:'Exam, year and the paper PDF are required.'});
     if(!GEMINI_API_KEY)return send(res,400,{error:'AI is not configured on the server.'});
-    if(await pyqCol.findOne({exam,year}))return send(res,409,{error:'This paper has already been added. Refresh the page.'});
-    if(await pyqJobs.findOne({exam,year,status:'running',createdAt:{$gt:new Date(now-10*60000)}}))return send(res,409,{error:'Someone is already uploading this paper. Please check again in a few minutes.'});
+    if(await pyqCol.findOne({exam,year,paper:label}))return send(res,409,{error:'This paper has already been added. Refresh the page.'});
+    if(await pyqJobs.findOne({exam,year,label,status:'running',createdAt:{$gt:new Date(now-10*60000)}}))return send(res,409,{error:'Someone is already uploading this paper. Please check again in a few minutes.'});
     if(!isAdmin(user)&&(await pyqJobs.find({userId:user._id,createdAt:{$gt:new Date(now-86400000)}}).toArray()).length>=5)return send(res,429,{error:'Upload limit reached for today (5 papers). Please try again tomorrow.'});
-    const job=await pyqJobs.insertOne({userId:user._id,exam,year,status:'running',message:'Reading the paper with AI. This can take 1 to 4 minutes.',createdAt:new Date()});
-    runImport(job.insertedId,{exam,examName:String(b.examName||exam).slice(0,60),year,subject:'auto',paper:String(b.paper),key:b.key?String(b.key):null});
+    const job=await pyqJobs.insertOne({userId:user._id,exam,year,label,status:'running',message:'Reading the paper with AI. This can take 1 to 4 minutes.',createdAt:new Date()});
+    runImport(job.insertedId,{exam,examName:String(b.examName||exam).slice(0,60),year,label,subject:'auto',paper:String(b.file),key:b.key?String(b.key):null});
     return send(res,202,{jobId:String(job.insertedId)});
    }
    const jm=url.pathname.match(/^\/api\/pyq\/job\/([a-f0-9]{24})$/);
    if(jm&&req.method==='GET'){const j=await pyqJobs.findOne({_id:new ObjectId(jm[1])});return j&&(String(j.userId)===String(user._id)||isAdmin(user))?send(res,200,{status:j.status,message:j.message,count:j.count||0}):send(res,404,{error:'Job not found.'});}
+   if(url.pathname==='/api/pyq/report'&&req.method==='POST'){
+    const b=await readBody(req),exam=String(b.exam||'').slice(0,30),year=Number(b.year),label=String(b.label||'Paper 1').slice(0,30),note=String(b.note||'').trim().slice(0,500);
+    if(!await pyqCol.findOne({exam,year,paper:label}))return send(res,404,{error:'Paper not found.'});
+    const old=await pyqReports.findOne({userId:user._id,exam,year,label});
+    if(old)await pyqReports.updateOne({_id:old._id},{$set:{note,createdAt:new Date()}});else await pyqReports.insertOne({userId:user._id,userName:user.name,exam,year,label,note,createdAt:new Date()});
+    return send(res,200,{ok:true});
+   }
    if(url.pathname.startsWith('/api/admin/pyq')){
     if(!isAdmin(user))return send(res,403,{error:'Admin only.'});
-    if(url.pathname==='/api/admin/pyq'&&req.method==='DELETE'){const exam=String(url.searchParams.get('exam')||''),year=Number(url.searchParams.get('year'));if(!exam||!year)return send(res,400,{error:'exam and year required'});await pyqCol.deleteMany({exam,year});return send(res,200,{ok:true});}
+    if(url.pathname==='/api/admin/pyq/papers'&&req.method==='GET'){
+     const docs=await pyqCol.find({},{projection:{exam:1,year:1,paper:1,ai:1}}).toArray(),reps=await pyqReports.find({}).toArray(),map={};
+     docs.forEach(d=>{const l=d.paper||'Paper 1',k=`${d.exam}|${d.year}|${l}`;const m=map[k]=map[k]||{exam:d.exam,year:d.year,label:l,count:0,ai:0,reports:[]};m.count++;if(d.ai)m.ai++;});
+     reps.forEach(r=>{const m=map[`${r.exam}|${r.year}|${r.label}`];if(m)m.reports.push({by:r.userName,note:r.note,at:r.createdAt});});
+     return send(res,200,{papers:Object.values(map).sort((a,b)=>b.reports.length-a.reports.length||b.year-a.year)});
+    }
+    const sel=()=>({exam:String(url.searchParams.get('exam')||''),year:Number(url.searchParams.get('year')),label:String(url.searchParams.get('label')||'Paper 1')});
+    if(url.pathname==='/api/admin/pyq/dismiss'&&req.method==='POST'){const{exam,year,label}=sel();await pyqReports.deleteMany({exam,year,label});return send(res,200,{ok:true});}
+    if(url.pathname==='/api/admin/pyq'&&req.method==='DELETE'){const{exam,year,label}=sel();if(!exam||!year)return send(res,400,{error:'exam and year required'});await Promise.all([pyqCol.deleteMany({exam,year,paper:label}),pyqReports.deleteMany({exam,year,label})]);return send(res,200,{ok:true});}
    }
    if(url.pathname==='/api/questions/meta'&&req.method==='GET')return send(res,200,Q.meta());
    if(url.pathname==='/api/questions'&&req.method==='GET'){
@@ -232,8 +255,11 @@ async function start(){
  if(!JWT_SECRET||JWT_SECRET.length<16){console.error('JWT_SECRET is required (at least 16 characters).');process.exitCode=1;return;}
  if(!MONGODB_URI){console.error('MongoDB is required. Add MONGODB_URI to your .env file.');process.exitCode=1;return;}
  client=new MongoClient(MONGODB_URI);await client.connect();db=client.db(DB_NAME);
- users=db.collection('users');attempts=db.collection('attempts');chats=db.collection('chats');convs=db.collection('convs');pyqCol=db.collection('pyq');pyqJobs=db.collection('pyqjobs');documents=db.collection('documents');interviews=db.collection('interviews');
+ users=db.collection('users');attempts=db.collection('attempts');chats=db.collection('chats');convs=db.collection('convs');pyqCol=db.collection('pyq');pyqJobs=db.collection('pyqjobs');pyqReports=db.collection('pyqreports');documents=db.collection('documents');interviews=db.collection('interviews');
  await Promise.all([users.createIndex({email:1},{unique:true}),attempts.createIndex({userId:1,_id:-1}),chats.createIndex({userId:1,_id:-1}),chats.createIndex({convId:1,_id:1}),convs.createIndex({userId:1,updatedAt:-1}),pyqCol.createIndex({exam:1,year:1,s:1}),documents.createIndex({userId:1,_id:-1}),interviews.createIndex({userId:1,_id:-1})]);
+ if(ADMINS[0]&&(process.env.ADMIN_PASSWORD||'').length>=8){const email=ADMINS[0],pw=process.env.ADMIN_PASSWORD,u=await users.findOne({email});
+  if(!u){const salt=crypto.randomBytes(16).toString('hex');await users.insertOne({name:'Admin',gender:'other',category:'General',email,passHash:passwordHash(pw,salt),passSalt:salt,qualification:'grad',exam:'ssc-cgl',createdAt:new Date()});console.log('Admin account created for',email);}
+  else if(passwordHash(pw,u.passSalt)!==u.passHash){const salt=crypto.randomBytes(16).toString('hex');await users.updateOne({_id:u._id},{$set:{passHash:passwordHash(pw,salt),passSalt:salt}});console.log('Admin password updated for',email);}}
  await db.command({ping:1});server.listen(PORT,'0.0.0.0',()=>console.log(`Career Sarthii connected to MongoDB and running at http://localhost:${PORT}`));
 }
 start().catch(err=>{console.error('MongoDB connection failed:',err.message);process.exitCode=1;});

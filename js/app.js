@@ -122,27 +122,46 @@ pyq(){
  const box=view.querySelector('#box');let ov=null;
  const EXTRA={hindi:{en:'Hindi',hi:'\u0939\u093f\u0902\u0926\u0940'},sci:{en:'General Science',hi:'\u0938\u093e\u092e\u093e\u0928\u094d\u092f \u0935\u093f\u091c\u094d\u091e\u093e\u0928'}};
  const sname=id=>{const x=SUBJECTS.find(v=>v.id===id)||EXTRA[id];return x?L(x):id};
- const tot=y=>Object.values(y.subjects).reduce((p,c)=>p+c,0);
+ const sum=o=>Object.values(o).reduce((p,c)=>p+c,0),tot=y=>y.papers.reduce((p,c)=>p+sum(c.subjects),0);
+ const back=(f)=>{box.querySelector('#bk').onclick=f};
  const years=()=>{clearT();box.dataset.m='y';if(!ov){box.textContent=t('model.busy');return}
-  box.innerHTML=`<p class="hint">${t('pyq.pick')}</p><div class="yrs">${ov.years.map(y=>{const n=tot(y);return`<button class="yr${n?'':' up'}" data-y="${y.year}"><b>${y.year}</b><span>${n?n+' '+t('pyq.q'):y.processing?t('pyq.proc'):t('pyq.up')}</span></button>`}).join('')}</div>`;
-  box.querySelectorAll('.yr').forEach(b=>b.onclick=()=>{const y=ov.years.find(v=>v.year===+b.dataset.y);tot(y)?subjects(y):upload(y)})};
- const subjects=y=>{clearT();box.dataset.m='s';const ent=Object.entries(y.subjects),n=tot(y);
-  box.innerHTML=`<button class="tbtn" id="bk" type="button">\u2190 ${t('pyq.back')}</button><h3 style="margin:14px 0 4px">${esc(exam().n)} ${y.year}</h3><p class="hint">${t('pyq.sub')}</p><div class="list">${ent.map(([s,c])=>`<button data-s="${s}"><b style="font-weight:500">${esc(sname(s))}</b><span>${c} ${t('pyq.q')}</span></button>`).join('')}${ent.length>1?`<button data-s="all"><b style="font-weight:500">${t('pyq.full')}</b><span>${n} ${t('pyq.q')}</span></button>`:''}</div>${me.admin?`<p style="margin-top:14px"><button class="tbtn" id="del" type="button">Delete this paper (admin)</button></p>`:''}<div id="qb" style="margin-top:22px"></div>`;
-  box.querySelector('#bk').onclick=years;
-  const del=box.querySelector('#del');if(del)del.onclick=async()=>{if(!confirm('Delete '+y.year+' paper?'))return;await api('/admin/pyq?exam='+encodeURIComponent(me.exam)+'&year='+y.year,{method:'DELETE'}).catch(e=>alert(e.message));await refresh();years()};
-  const go=async s=>{const qb=box.querySelector('#qb');clearT();qb.textContent=t('model.busy');try{const r=await api('/pyq/paper?exam='+encodeURIComponent(me.exam)+'&year='+y.year+(s==='all'?'':'&s='+s));if(!r.questions.length){qb.innerHTML=`<div class="notice">${t('pyq.none')}</div>`;return}runQuiz(qb,r.questions,res=>summary(qb,res,()=>go(s)));qb.scrollIntoView({behavior:'smooth',block:'start'})}catch(e){qb.textContent=e.message}};
+  box.innerHTML=`<p class="hint">${t('pyq.pick')}</p><div class="yrs">${ov.years.map(y=>{const n=tot(y);return`<button class="yr${n?'':' up'}" data-y="${y.year}"><b>${y.year}</b><span>${n?(y.papers.length>1?y.papers.length+' '+t('pyq.pp')+' \u00b7 ':'')+n+' '+t('pyq.q'):y.processing.length?t('pyq.proc'):t('pyq.up')}</span></button>`}).join('')}</div>`;
+  box.querySelectorAll('.yr').forEach(b=>b.onclick=()=>{const y=ov.years.find(v=>v.year===+b.dataset.y);y.papers.length?papers(y):upload(y,'Paper 1')})};
+ const papers=y=>{clearT();box.dataset.m='p';
+  box.innerHTML=`<button class="tbtn" id="bk" type="button">\u2190 ${t('pyq.back')}</button><h3 style="margin:14px 0 4px">${esc(exam().n)} ${y.year}</h3><p class="hint">${t('pyq.papers')}</p><div class="list">${y.papers.map((p,i)=>`<button data-i="${i}"><b style="font-weight:500">${esc(p.label)}</b><span>${sum(p.subjects)} ${t('pyq.q')}</span></button>`).join('')}${y.processing.map(l=>`<button disabled><b style="font-weight:500">${esc(l)}</b><span>${t('pyq.proc')}</span></button>`).join('')}<button data-i="add"><b style="font-weight:500">+ ${t('pyq.add')}</b><span></span></button></div>`;
+  back(years);box.querySelectorAll('.list button[data-i]').forEach(b=>b.onclick=()=>b.dataset.i==='add'?upload(y,''):subjects(y,y.papers[+b.dataset.i]))};
+ const subjects=(y,p)=>{clearT();box.dataset.m='s';const ent=Object.entries(p.subjects),n=sum(p.subjects),lab=encodeURIComponent(p.label);
+  box.innerHTML=`<button class="tbtn" id="bk" type="button">\u2190 ${t('pyq.back')}</button><h3 style="margin:14px 0 4px">${esc(exam().n)} ${y.year} \u00b7 ${esc(p.label)}</h3><p class="hint">${t('pyq.sub')}</p><div class="list">${ent.map(([s,c])=>`<button data-s="${s}"><b style="font-weight:500">${esc(sname(s))}</b><span>${c} ${t('pyq.q')}</span></button>`).join('')}${ent.length>1?`<button data-s="all"><b style="font-weight:500">${t('pyq.full')}</b><span>${n} ${t('pyq.q')}</span></button>`:''}</div><div id="qb" style="margin-top:22px"></div><div class="repbox"><button class="tbtn" id="rp" type="button">\u2606 ${t('pyq.rep')}</button><div id="rf" class="hide"><textarea id="rn" rows="2" maxlength="500" placeholder="${t('pyq.repn')}"></textarea><button class="btn sm" id="rs" type="button">${t('pyq.reps')}</button></div></div>`;
+  back(()=>papers(y));
+  const rp=box.querySelector('#rp'),rf=box.querySelector('#rf');rp.onclick=()=>rf.classList.toggle('hide');
+  box.querySelector('#rs').onclick=async()=>{try{await api('/pyq/report',{method:'POST',body:JSON.stringify({exam:me.exam,year:y.year,label:p.label,note:box.querySelector('#rn').value})});rf.classList.add('hide');rp.textContent='\u2605 '+t('pyq.reped');rp.disabled=true}catch(e){alert(e.message)}};
+  const go=async s=>{const qb=box.querySelector('#qb');clearT();qb.textContent=t('model.busy');try{const r=await api('/pyq/paper?exam='+encodeURIComponent(me.exam)+'&year='+y.year+'&label='+lab+(s==='all'?'':'&s='+s));if(!r.questions.length){qb.innerHTML=`<div class="notice">${t('pyq.none')}</div>`;return}runQuiz(qb,r.questions,res=>summary(qb,res,()=>go(s)));qb.scrollIntoView({behavior:'smooth',block:'start'})}catch(e){qb.textContent=e.message}};
   box.querySelectorAll('.list button').forEach(b=>b.onclick=()=>go(b.dataset.s))};
- const upload=y=>{clearT();box.dataset.m='u';
-  box.innerHTML=`<button class="tbtn" id="bk" type="button">\u2190 ${t('pyq.back')}</button><h3 style="margin:14px 0 6px">${esc(exam().n)} ${y.year}</h3><div class="notice">${y.processing?t('pyq.busy'):t('pyq.need')}</div>${y.processing?'':`<div class="field" style="margin-top:16px"><label for="af">${t('pyq.paperpdf')}</label><input type="file" id="af" accept="application/pdf"></div><div class="field"><label for="ak">${t('pyq.keypdf')}</label><input type="file" id="ak" accept="application/pdf"></div><button class="btn" id="go" type="button">${t('pyq.send')}</button>`}<p class="hint" id="am" style="margin-top:12px"></p>`;
-  box.querySelector('#bk').onclick=years;const go=box.querySelector('#go');if(!go)return;
+ const upload=(y,label)=>{clearT();box.dataset.m='u';const busy=label&&y.processing.includes(label);
+  box.innerHTML=`<button class="tbtn" id="bk" type="button">\u2190 ${t('pyq.back')}</button><h3 style="margin:14px 0 6px">${esc(exam().n)} ${y.year}</h3><div class="notice">${busy?t('pyq.busy'):t('pyq.need')}</div>${busy?'':`<div class="field" style="margin-top:16px"><label for="al">${t('pyq.label')}</label><input id="al" list="pl" maxlength="30" value="${esc(label)}" placeholder="Paper 1, Paper 2, Shift 1..."><datalist id="pl">${['Paper 1','Paper 2','Shift 1','Shift 2','Shift 3','Shift 4','Shift 5','Shift 6'].map(x=>`<option value="${x}">`).join('')}</datalist></div><div class="field"><label for="af">${t('pyq.paperpdf')}</label><input type="file" id="af" accept="application/pdf"></div><div class="field"><label for="ak">${t('pyq.keypdf')}</label><input type="file" id="ak" accept="application/pdf"></div><button class="btn" id="go" type="button">${t('pyq.send')}</button>`}<p class="hint" id="am" style="margin-top:12px"></p>`;
+  back(y.papers.length?()=>papers(y):years);const go=box.querySelector('#go');if(!go)return;
   const am=box.querySelector('#am'),b64=f=>new Promise((ok,no)=>{const r=new FileReader();r.onload=()=>ok(String(r.result).split(',')[1]);r.onerror=no;r.readAsDataURL(f)});
-  go.onclick=async()=>{const f=box.querySelector('#af').files[0],k=box.querySelector('#ak').files[0];if(!f){am.textContent=t('pyq.choose');return}if(f.size+(k?k.size:0)>8*1024*1024){am.textContent=t('pyq.big');return}
+  go.onclick=async()=>{const f=box.querySelector('#af').files[0],k=box.querySelector('#ak').files[0],lb=box.querySelector('#al').value.trim();if(!lb||!f){am.textContent=t('pyq.choose');return}if(f.size+(k?k.size:0)>8*1024*1024){am.textContent=t('pyq.big');return}
    go.disabled=true;am.textContent=t('pyq.upl');
-   try{const r=await api('/pyq/import',{method:'POST',body:JSON.stringify({exam:me.exam,examName:exam().n,year:y.year,paper:await b64(f),key:k?await b64(k):null})});
-    const poll=async()=>{if(!document.body.contains(am))return;const j=await api('/pyq/job/'+r.jobId);am.textContent=j.message;if(j.status==='running'){setTimeout(poll,3000)}else if(j.status==='done'){await refresh();const ny=ov.years.find(v=>v.year===y.year);if(ny&&tot(ny))subjects(ny)}else go.disabled=false};poll()}
+   try{const r=await api('/pyq/import',{method:'POST',body:JSON.stringify({exam:me.exam,examName:exam().n,year:y.year,label:lb,file:await b64(f),key:k?await b64(k):null})});
+    const poll=async()=>{if(!document.body.contains(am))return;const j=await api('/pyq/job/'+r.jobId);am.textContent=j.message;if(j.status==='running'){setTimeout(poll,3000)}else if(j.status==='done'){await refresh();const ny=ov.years.find(v=>v.year===y.year),np=ny&&ny.papers.find(v=>v.label===lb);if(np)subjects(ny,np)}else go.disabled=false};poll()}
    catch(e){am.textContent=e.message;go.disabled=false}}};
  const refresh=()=>api('/pyq/overview?exam='+encodeURIComponent(me.exam)).then(r=>{ov=r;if(box.dataset.m==='y')years()}).catch(e=>{box.textContent=e.message});
  years();refresh();
+},
+
+admin(){
+ if(!me.admin){location.hash='#dashboard';return}
+ view.innerHTML=`<h2>Admin</h2><p class="hint">All uploaded papers. Papers with a \u2605 were reported by students and are shown first. Review the questions: if the paper is fine, press Keep; if it is wrong, press Delete.</p><div id="al" style="margin-top:16px">Loading...</div>`;
+ const nm=id=>(EXAMS.find(e=>e.id===id)||{n:id}).n,al=view.querySelector('#al');
+ const qs=p=>`exam=${encodeURIComponent(p.exam)}&year=${p.year}&label=${encodeURIComponent(p.label)}`;
+ const load=async()=>{try{const r=await api('/admin/pyq/papers');al.innerHTML=r.papers.length?'':'<div class="notice">No papers uploaded yet.</div>';
+  r.papers.forEach(p=>{const d=document.createElement('div');d.className='card adm';d.innerHTML=`<b>${p.reports.length?`<span class="star">\u2605 ${p.reports.length}</span> `:''}${esc(nm(p.exam))} ${p.year} \u00b7 ${esc(p.label)}</b><div class="hint">${p.count} questions \u00b7 ${p.ai} solved by AI</div>${p.reports.map(x=>`<div class="rpt">${esc(x.by||'User')}: ${esc(x.note||'(no note)')}</div>`).join('')}<div class="acts" style="margin-top:10px"><button class="btn ghost sm" data-a="rv">Review questions</button>${p.reports.length?'<button class="btn ghost sm" data-a="keep">Keep (reports are wrong)</button>':''}<button class="btn sm stop" data-a="del">Delete paper</button></div><div class="rvw"></div>`;
+   d.querySelector('[data-a=rv]').onclick=async e=>{const box=d.querySelector('.rvw');if(box.innerHTML){box.innerHTML='';return}box.textContent='Loading...';const x=await api('/pyq/paper?'+qs(p).replace('label','label'));box.innerHTML=x.questions.map((q,i)=>`<div class="rq"><b>${i+1}. ${esc(L(q.q))}</b>${L(q.o).map((o,k)=>`<div class="${k===q.a?'ok':''}">${k===q.a?'\u2713 ':''}${esc(o)}</div>`).join('')}<div class="hint" style="white-space:pre-line">${esc(L(q.x))}</div></div>`).join('')};
+   const keep=d.querySelector('[data-a=keep]');if(keep)keep.onclick=async()=>{await api('/admin/pyq/dismiss?'+qs(p),{method:'POST',body:'{}'});load()};
+   d.querySelector('[data-a=del]').onclick=async()=>{if(!confirm('Delete '+nm(p.exam)+' '+p.year+' '+p.label+'?'))return;await api('/admin/pyq?'+qs(p),{method:'DELETE'});load()};
+   al.appendChild(d)})}catch(e){al.textContent=e.message}};
+ load();
 },
 
 model(){
@@ -245,5 +264,6 @@ window.addEventListener('hashchange',route);
 document.addEventListener('langchange',()=>{fillExams();if(hook)hook();else if(view.innerHTML)route()});
 const sp=document.querySelector('.topbar .sp'),avA=document.createElement('a');avA.href='#profile';avA.className='av';avA.title='Profile';sp.insertBefore(avA,sp.firstChild);
 function paintAv(){avA.innerHTML=me.avatar?`<img src="${me.avatar}" alt="">`:esc((me.name||'?').trim()[0]||'?').toUpperCase()}paintAv();
+if(me.admin){const ad=document.createElement('a');ad.className='nl';ad.href='#admin';ad.textContent='Admin';document.querySelector('#side .bot').before(ad)}
 fillExams();route();
 })();

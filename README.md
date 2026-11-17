@@ -56,3 +56,12 @@ This is a runnable local application, not a production deployment. The seeded qu
 - Limits: 5 uploads per user per day, a saved paper cannot be overwritten by users, and the AI rejects a PDF that is not the paper for that exam and year.
 - Answers solved by AI (no key supplied) are marked in the quiz. Set `ADMIN_EMAIL` (your login email) in Render so you can delete a bad paper from the subject screen.
 - Profile page: name, gender, category, qualification, exam, bio and photo. Changing qualification unlocks the exams for that level.
+
+## Papers with shifts, reports and admin
+
+- A year can hold several papers or shifts ("Paper 1", "Paper 2", "Shift 1" ...). Each one is uploaded separately and practised separately.
+- Students can press the star at the bottom right of a paper to report a problem. The admin page (sidebar, visible only to the account whose email is in `ADMIN_EMAIL`) shows reported papers first with a star, lets you review every question and answer, and then Keep (dismiss the reports) or Delete the paper.
+
+## Admin login
+
+Set `ADMIN_EMAIL` and `ADMIN_PASSWORD` (8+ characters) in Render. On every start the server creates that account (or resets its password to the value you set). Log in on the normal login page with them and you land on the Admin page.
