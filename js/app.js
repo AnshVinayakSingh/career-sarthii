@@ -256,10 +256,35 @@ chapters(){
    box.innerHTML=`<p class="hint">${tt('Pick a subject of your exam','अपनी परीक्षा का विषय चुनें')}</p><div class="list">${r.subjects.map(s=>`<button data-s="${s.id}"><b style="font-weight:500">${esc(L(s))}</b><span>${s.n} ${tt('questions in the exam','प्रश्न परीक्षा में')}</span></button>`).join('')}</div>`;
    box.querySelectorAll('.list button').forEach(b=>b.onclick=()=>chaps(r.subjects.find(s=>s.id===b.dataset.s)))}catch(e){box.textContent=e.message}};
  const chaps=async s=>{const k=++run;busy(tt('Finding chapters...','चैप्टर खोजे जा रहे हैं...'));try{const r=await api('/chap/list?exam='+enc(me.exam)+'&examName='+enc(exam().n)+'&s='+s.id);if(!alive(k))return;
-   box.innerHTML=`${bkb}<h3 style="margin:14px 0 4px">${esc(L(s))}</h3><p class="hint">${tt('Pick a chapter. Fresh exam style questions are made for you every time.','चैप्टर चुनें। हर बार परीक्षा जैसे नए प्रश्न बनते हैं।')}</p><div class="list">${r.chapters.map((c,i)=>`<button data-i="${i}"><b style="font-weight:500">${i+1}. ${esc(L(c))}</b><span></span></button>`).join('')}</div><div id="qb" style="margin-top:20px"></div>`;
+   box.innerHTML=`${bkb}<h3 style="margin:14px 0 4px">${esc(L(s))}</h3><p class="hint">${tt('Pick a chapter. Questions come one by one, new ones are prepared while you solve.','चैप्टर चुनें। हर बार परीक्षा जैसे नए प्रश्न बनते हैं।')}</p><div class="list">${r.chapters.map((c,i)=>`<button data-i="${i}"><b style="font-weight:500">${i+1}. ${esc(L(c))}</b><span></span></button>`).join('')}</div><div id="qb" style="margin-top:20px"></div>`;
    bk(subjects);box.querySelectorAll('.list button').forEach(b=>b.onclick=()=>go(s,r.chapters[+b.dataset.i]))}catch(e){box.textContent=e.message}};
- const go=async(s,c)=>{clearT();const qb=box.querySelector('#qb');qb.innerHTML=`<div class="notice">${tt('Making new questions for','नए प्रश्न बन रहे हैं:')} ${esc(L(c))}... ${tt('about 20 to 40 seconds','लगभग 20 से 40 सेकंड')}</div>`;qb.scrollIntoView({behavior:'smooth',block:'start'});
-  try{const r=await api('/chap/questions',{method:'POST',body:JSON.stringify({exam:me.exam,examName:exam().n,s:s.id,cid:c.id,n:10})});if(!document.body.contains(qb))return;runQuiz(qb,r.questions,res=>summary(qb,res,()=>go(s,c)),{chap:true});qb.scrollIntoView({behavior:'smooth',block:'start'})}catch(e){if(document.body.contains(qb))qb.innerHTML=`<div class="notice">${esc(e.message)}</div>`}};
+ let sess=null;
+ const go=(s,c)=>{clearT();if(sess)sess.dead=true;const me2=sess={dead:false};const qb=box.querySelector('#qb'),BATCH=5;
+  let queue=[],idx=0,inflight=false,err=null,waiting=true,picked=null,start=Date.now(),frozen=null,res=[],t0=Date.now();
+  const live=()=>!me2.dead&&document.body.contains(qb);
+  const more=async()=>{if(inflight||!live())return;inflight=true;err=null;
+   for(let tr=0;tr<2&&live();tr++){try{const r=await api('/chap/questions',{method:'POST',body:JSON.stringify({exam:me.exam,examName:exam().n,s:s.id,cid:c.id,n:BATCH})});if(!live()){inflight=false;return}queue.push(...r.questions);err=null;break}catch(e){err=e.message}}
+   inflight=false;if(!live())return;
+   if(waiting&&(queue.length>idx||err)){if(queue.length>idx){waiting=false;start=Date.now();frozen=null}draw()}
+   pre()};
+  const pre=()=>{if(live()&&!inflight&&!err&&queue.length-idx-1<BATCH)more()};
+  const finish=()=>{me2.dead=true;clearT();if(!res.length){qb.innerHTML='';return}saveAtt(res.map(r=>Object.assign({src:'quiz'},r)));summary(qb,res,()=>go(s,c));qb.scrollIntoView({behavior:'smooth',block:'start'})};
+  const endBtn=`<button class="tbtn" id="en" type="button" style="margin-left:10px">${tt('End practice','प्रैक्टिस खत्म करें')}</button>`;
+  function draw(){if(!live())return;
+   if(waiting||queue.length<=idx){
+    qb.innerHTML=err?`<div class="notice">${esc(err)}</div><button class="btn" id="rt">${tt('Try again','फिर कोशिश करें')}</button>${endBtn}`:`<div class="notice">${tt('Making questions for','प्रश्न बन रहे हैं:')} ${esc(L(c))}... ${tt('a few seconds','कुछ सेकंड')}</div>${res.length?endBtn:''}`;
+    const rt=qb.querySelector('#rt');if(rt)rt.onclick=()=>{err=null;draw();more()};const en=qb.querySelector('#en');if(en)en.onclick=finish;return}
+   const q=queue[idx],ok=res.filter(r=>r.ok).length;
+   qb.innerHTML=`<div class="qhead"><span>${tt('Question','प्रश्न')} ${idx+1} <span class="hint">· ${ok} / ${res.length} ${tt('correct','सही')}</span></span><span class="timer" id="qt">${fmt((frozen??(Date.now()-start))/1000)}</span></div>
+   <h3 class="qtext">${esc(L(q.q))}</h3>
+   <div>${L(q.o).map((o,k)=>{let cl='opt';if(picked!==null){if(k===q.a)cl+=' correct';else if(k===picked)cl+=' wrong'}return`<button class="${cl}" data-k="${k}" ${picked!==null?'disabled':''}>${esc(o)}</button>`}).join('')}</div>
+   ${picked===null?'':`<div class="fb ${picked===q.a?'ok':'no'}"><b>${picked===q.a?t('q.correct'):t('q.wrong')+' '+esc(L(q.o)[q.a])}</b><b style="margin-top:8px">${t('q.exp')}</b>${esc(L(q.x)||'')}</div><button class="btn" id="nx">${t('q.next')}</button>${endBtn}`}
+   ${picked===null&&res.length?`<div style="margin-top:12px">${endBtn.replace('margin-left:10px','')}</div>`:''}`;
+   qb.querySelectorAll('.opt').forEach(b=>b.onclick=()=>{frozen=Date.now()-start;picked=+b.dataset.k;const sec=Math.round(frozen/1000);res.push({s:q.s,c:q.c,ok:picked===q.a,sec});api('/chap/answer',{method:'POST',body:JSON.stringify({id:q.id,picked,sec})}).catch(()=>{});draw()});
+   const nx=qb.querySelector('#nx');if(nx)nx.onclick=()=>{idx++;picked=null;frozen=null;start=Date.now();if(queue.length<=idx){waiting=true;draw();more();return}draw();pre()};
+   const en=qb.querySelector('#en');if(en)en.onclick=finish}
+  timers.push(setInterval(()=>{const e=document.getElementById('qt');if(e&&frozen===null&&!waiting)e.textContent=fmt((Date.now()-start)/1000)},500));
+  draw();qb.scrollIntoView({behavior:'smooth',block:'start'});more()};
  view.querySelector('#mya').onclick=async()=>{const k=++run;busy();try{const r=await api('/chap/attempted?exam='+enc(me.exam));if(!alive(k))return;
    box.innerHTML=`${bkb}<h3 style="margin:14px 0 4px">${tt('My attempted questions','मेरे हल किए प्रश्न')}</h3><p class="hint">${tt('Pick a subject to see your attempted questions, your answers and explanations.','विषय चुनें और अपने हल किए प्रश्न, उत्तर और व्याख्या देखें।')}</p><div class="list">${r.subjects.length?r.subjects.map(s=>`<button data-s="${s.id}"><b style="font-weight:500">${esc(L(s))}</b><span>${s.ok} / ${s.total} ${tt('correct','सही')}</span></button>`).join(''):`<div class="notice">${tt('You have not attempted any chapter wise question yet.','आपने अभी तक कोई चैप्टर वाइज़ प्रश्न हल नहीं किया है।')}</div>`}</div>`;
    bk(subjects);box.querySelectorAll('.list button').forEach(b=>b.onclick=async()=>{const s=r.subjects.find(x=>x.id===b.dataset.s),k2=++run;busy();try{const d=await api('/chap/attempted?exam='+enc(me.exam)+'&s='+s.id);if(!alive(k2))return;const cs=[...new Set(d.items.map(x=>x.c))];

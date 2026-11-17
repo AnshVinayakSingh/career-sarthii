@@ -69,6 +69,22 @@ function clean(r) {
   return { q: r.q.trim(), o: opts, a: ans, x: String(r.x || '').trim(), t: String(r.t || '').trim().slice(0, 40) };
 }
 
+/* bilingual cleaner: same shuffle for English and Hindi so the answer index stays right */
+function cleanChap(r, lang) {
+  /* lang: 'en' | 'hi' | 'both' ; r = {q,o,x,a,t, qh,oh,xh} */
+  if (!r) return null;
+  const src = lang === 'hi' ? { q: r.qh || r.q, o: r.oh || r.o, x: r.xh || r.x, a: r.a, t: r.t } : r;
+  const base = clean(src, true); if (!base) return null;
+  const out = { q: base.q, o: base.o, a: base.a, x: base.x, t: base.t };
+  if (lang === 'both' && typeof r.qh === 'string' && Array.isArray(r.oh) && r.oh.length === 4 && r.oh.every(x => typeof x === 'string' && x.trim())) {
+    /* re-apply the same permutation: find where each English option went */
+    const orig = Array.isArray(r.o) ? r.o.map(x => String(x).trim()) : [];
+    const perm = base.o.map(x => orig.indexOf(x));
+    if (perm.every(i => i >= 0) && new Set(perm).size === 4) { out.qh = r.qh.trim(); out.oh = perm.map(i => String(r.oh[i]).trim()); out.xh = String(r.xh || '').trim(); }
+  }
+  return out;
+}
+
 module.exports = ctx => {
   async function genChunk({ examName, no, sub, n, avoid, samples }) {
     const lang = sub.lang === 'hi' ? 'Write the question, all options and the explanation entirely in Hindi (Devanagari script).' : 'Write in clear English.';
@@ -156,15 +172,18 @@ Return ONLY a JSON array of exactly ${n} objects with keys in this order: {"q": 
     return chapters;
   }
   async function genChapter({ examName, sub, chap, n, avoid, samples }) {
-    const lang = sub.lang === 'hi' ? 'Write the question, all options and the explanation entirely in Hindi (Devanagari script).' : 'Write in clear English.';
+    const mode = sub.lang === 'hi' ? 'hi' : sub.lang === 'en' ? 'en' : 'both';
+    const lang = mode === 'hi' ? 'Write the question, all options and the explanation entirely in Hindi (Devanagari script).' : mode === 'en' ? 'Write in clear English.' : 'Give every question in BOTH English and simple Hindi (Devanagari). Hindi fields must be a faithful translation: same numbers, names, symbols and same option order.';
+    const keys = mode === 'both' ? '{"q": English question, "o": [4 English options], "x": English explanation, "a": 0-based index of correct option, "t": sub-topic in 2-3 words, "qh": Hindi question, "oh": [4 Hindi options in the same order], "xh": Hindi explanation}' : '{"q": string, "o": [4 strings], "x": string, "a": 0-based index of correct option, "t": sub-topic in 2-3 words}';
     const prompt = `You are a senior paper-setter for the Indian government exam "${examName}". Create ${n} NEW multiple-choice questions ONLY from the chapter "${chap.en}" of the subject "${sub.en}".
-Write them exactly in the style, difficulty and patterns in which this exam asks (or can ask) questions from this chapter. Cover the different question types and sub-topics of the chapter; important, frequently asked ideas can come again but always with fresh numbers, data, names or statements.
+Write them exactly in the style and difficulty in which this exam asks questions from this chapter. Mix different question types of the chapter; always use fresh numbers, data, names or statements.
 ${samples.length ? 'Real previous year questions of this exam (style only, never copy):\n- ' + samples.join('\n- ') + '\n' : ''}${avoid.length ? 'Do NOT repeat or paraphrase these questions already given to the student:\n- ' + avoid.join('\n- ') + '\n' : ''}${lang}
-Rules: self-contained text (no figures), exactly one correct option, 4 distinct options without A/B/C/D labels. Prefer timeless facts; avoid news that may be outdated. In "x" give a detailed explanation of 3 to 6 sentences: for maths and reasoning the full step by step working with the formula or trick; for other subjects the concept or fact and briefly why each wrong option is wrong. Work out "x" first, then set "a" to match.
-Return ONLY a JSON array of exactly ${n} objects with keys in this order: {"q": string, "o": [4 strings], "x": string, "a": 0-based index of correct option, "t": sub-topic in 2-3 words}.`;
-    const raw = await ctx.gemini([{ role: 'user', parts: [{ text: prompt }] }], { responseMimeType: 'application/json', maxOutputTokens: 16000 }, null, { timeout: 120000 });
+Rules: self-contained text (no figures), exactly one correct option, 4 distinct options without A/B/C/D labels. Prefer timeless facts. In "x" give a short, clear explanation of 2 to 4 sentences: for maths and reasoning the exact step by step working or trick; for other subjects the key fact and why the answer is right. Work out "x" first, then set "a" to match, and double check that the marked answer is truly correct.
+Return ONLY a JSON array of exactly ${n} objects: ${keys}.`;
+    const think = ['quant', 'reason'].includes(sub.id) ? 'low' : 'minimal';
+    const raw = await ctx.gemini([{ role: 'user', parts: [{ text: prompt }] }], { responseMimeType: 'application/json', maxOutputTokens: 6000 }, null, { timeout: 30000, models: ctx.fastModels, think });
     const list = parseList(raw || '[]');
-    return (Array.isArray(list) ? list : []).map(clean).filter(Boolean);
+    return (Array.isArray(list) ? list : []).map(r => cleanChap(r, mode)).filter(Boolean);
   }
   async function chapHandle(req, res, url, user, exam) {
     const p = url.pathname, send = ctx.send, q = url.searchParams;
@@ -181,7 +200,7 @@ Return ONLY a JSON array of exactly ${n} objects with keys in this order: {"q": 
     }
     if (p === '/api/chap/questions' && req.method === 'POST') {
       if (!ctx.hasKey) return send(res, 503, { error: 'Chapter wise practice needs the Gemini API key.' });
-      const b = await ctx.readBody(req), ex = exam(b.exam), examName = String(b.examName || ex).slice(0, 60), sid = String(b.s || ''), sub = subjectOf(ex, sid), n = Math.max(5, Math.min(15, Number(b.n) || 10));
+      const b = await ctx.readBody(req), ex = exam(b.exam), examName = String(b.examName || ex).slice(0, 60), sid = String(b.s || ''), sub = subjectOf(ex, sid), n = Math.max(3, Math.min(8, Number(b.n) || 5));
       if (!sub) return send(res, 404, { error: 'Subject not found.' });
       const list = await chapList(ex, examName, sid).catch(() => null), chap = list && list.find(c => c.id === b.cid);
       if (!chap) return send(res, 404, { error: 'Chapter not found.' });
@@ -191,17 +210,17 @@ Return ONLY a JSON array of exactly ${n} objects with keys in this order: {"q": 
       const pyq = await ctx.pyqCol.find({ exam: ex, s: sid }, { projection: { q: 1 } }).limit(40).toArray().catch(() => []);
       const samples = pick(pyq.map(x => String((x.q && x.q.en) || '').replace(/\s+/g, ' ').slice(0, 160)).filter(Boolean), 4);
       const got = []; let fails = 0, lastErr = null;
-      while (got.length < n && fails < 3) {
+      while (got.length < n && fails < 2) {
         try {
-          const part = await genChapter({ examName, sub: { ...SUB[sid], en: sub.en, lang: SUB[sid].lang }, chap, n: n - got.length + (fails ? 2 : 0), avoid, samples });
+          const part = await genChapter({ examName, sub: { id: sid, ...SUB[sid], en: sub.en, lang: SUB[sid].lang }, chap, n: n - got.length, avoid, samples });
           let added = 0;
           for (const x of part) { const k = fp(x.q); if (seen.has(k) || got.length >= n) continue; seen.add(k); avoid.push(x.q.replace(/\s+/g, ' ').slice(0, 90)); got.push({ ...x, fp: k }); added++; }
           if (!added) fails++;
         } catch (e) { fails++; lastErr = e; }
       }
       if (!got.length) return send(res, 502, { error: 'Question generation failed' + (lastErr ? ': ' + lastErr.message : '') + '. Please try again.' });
-      const docs = got.map(x => ({ userId: user._id, exam: ex, s: sid, cid: chap.id, c: chap.en, chi: chap.hi, fp: x.fp, t: x.t, q: { en: x.q }, o: { en: x.o }, x: { en: x.x }, a: x.a, picked: null, createdAt: new Date() }));
-      await translateQs(docs.map(d => ({ s: sid, q: d.q, o: d.o, x: d.x, _d: d })));
+      const sl = SUB[sid].lang, bi = (en, hi) => sl === 'hi' ? { en, hi: en } : hi ? { en, hi } : { en };
+      const docs = got.map(x => ({ userId: user._id, exam: ex, s: sid, cid: chap.id, c: chap.en, chi: chap.hi, fp: x.fp, t: x.t, q: bi(x.q, x.qh), o: bi(x.o, x.oh), x: bi(x.x, x.xh), a: x.a, picked: null, createdAt: new Date() }));
       await ctx.chq.insertMany(docs);
       return send(res, 200, { questions: docs.map(d => ({ id: String(d._id), s: sid, c: chap.en, q: d.q, o: d.o, a: d.a, x: d.x })) });
     }
