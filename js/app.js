@@ -322,6 +322,39 @@ notices(){
  nq.oninput=draw;view.querySelector('#nrf').onclick=()=>load(true);load(false);
 },
 
+books(){
+ view.innerHTML=`<h2>${tt('Books Library','पुस्तक पुस्तकालय')}</h2><p style="color:var(--muted)">${tt('Tap a book to read it. It opens in your phone or computer PDF reader.','किताब पर टैप करें और पढ़ें। यह आपके फोन या कंप्यूटर के PDF रीडर में खुलती है।')}</p><input id="bq" class="nq" type="search" placeholder="${tt('Search book or writer','किताब या लेखक खोजें')}"><div id="bg" class="bgrid" style="margin-top:16px"></div>`;
+ const bg=view.querySelector('#bg'),bq=view.querySelector('#bq');let all=[];
+ const draw=()=>{const q=bq.value.trim().toLowerCase(),l=all.filter(b=>!q||(b.title+' '+b.author).toLowerCase().includes(q));
+  bg.innerHTML=l.length?l.map(b=>`<a class="bk" href="/api/books/${b.id}/pdf" target="_blank" rel="noopener noreferrer"><div class="bkc">${b.cover?`<img loading="lazy" src="/api/books/${b.id}/cover" alt="">`:'<div class="bkn">PDF</div>'}</div><b class="bkt">${esc(b.title)}</b><span class="bka">${esc(b.author)}</span><span class="bkr">${tt('Read','पढ़ें')} \u2197</span></a>`).join(''):`<div class="notice" style="grid-column:1/-1">${all.length?tt('No book found.','कोई किताब नहीं मिली।'):tt('No books yet. Please check back soon.','अभी कोई किताब नहीं है। जल्द ही आएँगी।')}</div>`};
+ bq.oninput=draw;bg.innerHTML=`<div class="notice" style="grid-column:1/-1">${tt('Loading books...','किताबें लोड हो रही हैं...')}</div>`;
+ api('/books').then(r=>{if(!document.body.contains(bg))return;all=r.books||[];draw()}).catch(e=>{bg.innerHTML=`<div class="notice" style="grid-column:1/-1">${esc(e.message)}</div>`});
+},
+
+uploadbooks(){
+ if(!me.admin){location.hash='#books';return}
+ view.innerHTML=`<h2>${tt('Upload Books','किताबें अपलोड करें')}</h2><p style="color:var(--muted)">${tt('Add a book: cover image, book name, writer name and the PDF. It shows in every student\u2019s Books Library.','किताब जोड़ें: कवर इमेज, किताब का नाम, लेखक का नाम और PDF। यह हर छात्र की पुस्तक पुस्तकालय में दिखेगी।')}</p>
+ <form id="bf" class="card" style="max-width:560px"><div class="field"><label for="bc">${tt('Cover image','कवर इमेज')}</label><input id="bc" type="file" accept="image/png,image/jpeg,image/webp" required><img id="bp" alt="" style="display:none;margin-top:10px;max-width:120px;border-radius:6px"></div>
+ <div class="field"><label for="bn">${tt('Book name','किताब का नाम')}</label><input id="bn" maxlength="150" required></div>
+ <div class="field"><label for="ba">${tt('Writer name','लेखक का नाम')}</label><input id="ba" maxlength="100" required></div>
+ <div class="field"><label for="bf2">${tt('Book PDF (up to 80 MB)','किताब की PDF (80 MB तक)')}</label><input id="bf2" type="file" accept="application/pdf,.pdf" required></div>
+ <button class="btn" type="submit" id="bs">${tt('Upload book','किताब अपलोड करें')}</button><div id="bm" class="hint" style="margin-top:10px"></div><progress id="bpg" max="100" value="0" style="display:none;width:100%;margin-top:8px"></progress></form>
+ <h3 style="margin:26px 0 8px">${tt('Uploaded books','अपलोड की गई किताबें')}</h3><div id="bl" class="list"></div>`;
+ const bm=view.querySelector('#bm'),bl=view.querySelector('#bl'),pg=view.querySelector('#bpg'),bs=view.querySelector('#bs'),bc=view.querySelector('#bc'),bp=view.querySelector('#bp');let cover='';
+ const small=f=>new Promise((ok,no)=>{const u=URL.createObjectURL(f),im=new Image();im.onload=()=>{const W=420,r=Math.min(1,W/im.width),c=document.createElement('canvas');c.width=Math.round(im.width*r);c.height=Math.round(im.height*r);c.getContext('2d').drawImage(im,0,0,c.width,c.height);URL.revokeObjectURL(u);ok(c.toDataURL('image/jpeg',0.85))};im.onerror=()=>no(new Error(tt('Could not read this image.','यह इमेज नहीं पढ़ी जा सकी।')));im.src=u});
+ bc.onchange=async()=>{cover='';bp.style.display='none';if(!bc.files[0])return;try{cover=await small(bc.files[0]);bp.src=cover;bp.style.display='block'}catch(e){bm.textContent=e.message}};
+ const refresh=async()=>{try{const r=await api('/books');if(!document.body.contains(bl))return;bl.innerHTML=r.books.length?r.books.map(b=>`<div><b>${esc(b.title)}</b><span>${esc(b.author)} · ${Math.max(1,Math.round(b.size/1048576*10)/10)} MB <button class="tbtn" data-d="${b.id}" type="button">${tt('Delete','हटाएँ')}</button></span></div>`).join(''):`<div class="notice">${tt('No books uploaded yet.','अभी कोई किताब अपलोड नहीं हुई।')}</div>`;bl.querySelectorAll('[data-d]').forEach(x=>x.onclick=async()=>{if(!confirm(tt('Delete this book?','यह किताब हटाएँ?')))return;try{await api('/admin/books/'+x.dataset.d,{method:'DELETE'});refresh()}catch(e){bm.textContent=e.message}})}catch(e){bl.textContent=e.message}};
+ view.querySelector('#bf').onsubmit=async e=>{e.preventDefault();const f=view.querySelector('#bf2').files[0];if(!f||!cover){bm.textContent=tt('Please choose the cover image and the PDF.','कवर इमेज और PDF चुनें।');return}
+  if(f.size>80*1024*1024){bm.textContent=tt('PDF is larger than 80 MB.','PDF 80 MB से बड़ी है।');return}
+  bs.disabled=true;pg.style.display='block';pg.value=0;bm.textContent=tt('Uploading...','अपलोड हो रहा है...');let id=null;
+  try{const r=await api('/admin/books',{method:'POST',body:JSON.stringify({title:view.querySelector('#bn').value,author:view.querySelector('#ba').value,cover})});id=r.id;
+   await new Promise((ok,no)=>{const x=new XMLHttpRequest();x.open('PUT','/api/admin/books/'+id+'/pdf');x.setRequestHeader('Content-Type','application/pdf');x.upload.onprogress=ev=>{if(ev.lengthComputable)pg.value=Math.round(ev.loaded/ev.total*100)};x.onload=()=>{if(x.status<300)ok();else{let m='';try{m=JSON.parse(x.responseText).error}catch{}no(new Error(m||tt('Upload failed.','अपलोड नहीं हो सका।')))}};x.onerror=()=>no(new Error(tt('Network error. Please try again.','नेटवर्क में दिक्कत। फिर कोशिश करें।')));x.send(f)});
+   bm.textContent=tt('Book uploaded. Students can see it now.','किताब अपलोड हो गई। अब छात्र इसे देख सकते हैं।');e.target.reset();bp.style.display='none';cover='';refresh()}
+  catch(err){bm.textContent=err.message;if(id)api('/admin/books/'+id,{method:'DELETE'}).catch(()=>{})}
+  finally{bs.disabled=false;pg.style.display='none'}};
+ refresh();
+},
+
 documents(){
  view.innerHTML=`<h2>Study documents</h2><p style="color:var(--muted)">Upload previous year papers or notes. Files are stored in your account. PDF and TXT files can be used as references in AI chat.</p><form id="docForm" class="card" style="max-width:620px"><div class="field"><label for="docFile">PDF, TXT, or DOCX (up to 8 MB)</label><input id="docFile" type="file" accept=".pdf,.txt,.docx,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document" required></div><button class="btn" type="submit">Save document</button><span id="docMsg" class="hint" style="margin-left:12px"></span></form><div id="docs" class="list" style="margin-top:20px"></div>`;
  const list=view.querySelector('#docs'),msg=view.querySelector('#docMsg');
@@ -367,6 +400,6 @@ window.addEventListener('hashchange',route);
 document.addEventListener('langchange',()=>{fillExams();if(hook)hook();else if(view.innerHTML)route()});
 const sp=document.querySelector('.topbar .sp'),avA=document.createElement('a');avA.href='#profile';avA.className='av';avA.title='Profile';sp.insertBefore(avA,sp.firstChild);
 function paintAv(){avA.innerHTML=me.avatar?`<img src="${me.avatar}" alt="">`:esc((me.name||'?').trim()[0]||'?').toUpperCase()}paintAv();
-if(me.admin){const ad=document.createElement('a');ad.className='nl';ad.href='#admin';ad.textContent='Admin';document.querySelector('#side .bot').before(ad)}
+if(me.admin){const ad=document.createElement('a');ad.className='nl';ad.href='#admin';ad.textContent='Admin';document.querySelector('#side .bot').before(ad);const ub=document.createElement('a');ub.className='nl';ub.href='#uploadbooks';ub.textContent=tt('Upload Books','किताबें अपलोड करें');ad.before(ub)}
 fillExams();route();
 })();
