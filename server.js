@@ -22,7 +22,7 @@ const jwtVerify = token => { try { const [h, p, sig] = String(token).split('.');
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const passwordHash = (password,salt) => crypto.scryptSync(password,salt,64).toString('hex');
 const ADMINS = (process.env.ADMIN_EMAIL || '').toLowerCase().split(',').map(x => x.trim()).filter(Boolean);
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+const ADMIN_PASSWORD = (process.env.ADMIN_PASSWORD || '').trim();
 const isAdmin = u => !!u && ADMINS.includes(String(u.email).toLowerCase());
 const safeUser = u => ({name:u.name,gender:u.gender,category:u.category,email:u.email,qual:u.qualification,exam:u.exam,bio:u.bio||'',avatar:u.avatar||'',admin:isAdmin(u)});
 const mimeTypes={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.svg':'image/svg+xml','.json':'application/json; charset=utf-8','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.ico':'image/x-icon'};
@@ -125,12 +125,12 @@ const server=http.createServer(async(req,res)=>{
     const u=await users.findOne({_id:result.insertedId});await createSession(u._id,res);return send(res,201,{user:safeUser(u)});
    }
    if(req.method==='POST'&&url.pathname==='/api/login'){
-    const b=await readBody(req),email=String(b.email||'').trim().toLowerCase(),password=String(b.pass||'');let u=await users.findOne({email});
+    const b=await readBody(req),email=String(b.email||'').trim().toLowerCase(),password=String(b.pass||'');const adminPw=password.trim();let u=await users.findOne({email});
     const sha=x=>crypto.createHash('sha256').update(String(x)).digest();
-    if(ADMIN_PASSWORD&&ADMINS.includes(email)&&crypto.timingSafeEqual(sha(password),sha(ADMIN_PASSWORD))){
-     const salt=crypto.randomBytes(16).toString('hex'),passHash=passwordHash(password,salt);
+    if(ADMIN_PASSWORD&&ADMINS.includes(email)&&crypto.timingSafeEqual(sha(adminPw),sha(ADMIN_PASSWORD))){
+     const salt=crypto.randomBytes(16).toString('hex'),passHash=passwordHash(adminPw,salt);
      if(!u){await users.insertOne({name:'Admin',gender:'male',category:'General',email,passHash,passSalt:salt,qualification:'grad',exam:'ssc-cgl',createdAt:new Date()});u=await users.findOne({email});}
-     else{let same=false;try{same=crypto.timingSafeEqual(Buffer.from(passwordHash(password,u.passSalt),'hex'),Buffer.from(u.passHash,'hex'))}catch{}if(!same){await users.updateOne({_id:u._id},{$set:{passHash,passSalt:salt}});u=await users.findOne({_id:u._id});}}
+     else{let same=false;try{same=crypto.timingSafeEqual(Buffer.from(passwordHash(adminPw,u.passSalt),'hex'),Buffer.from(u.passHash,'hex'))}catch{}if(!same){await users.updateOne({_id:u._id},{$set:{passHash,passSalt:salt}});u=await users.findOne({_id:u._id});}}
      await createSession(u._id,res);return send(res,200,{user:safeUser(u)});
     }
     if(!u||!crypto.timingSafeEqual(Buffer.from(passwordHash(password,u.passSalt),'hex'),Buffer.from(u.passHash,'hex')))return send(res,401,{error:'Email or password is incorrect.'});
@@ -257,10 +257,11 @@ async function start(){
  client=new MongoClient(MONGODB_URI);await client.connect();db=client.db(DB_NAME);
  users=db.collection('users');attempts=db.collection('attempts');chats=db.collection('chats');convs=db.collection('convs');pyqCol=db.collection('pyq');pyqJobs=db.collection('pyqjobs');pyqReports=db.collection('pyqreports');documents=db.collection('documents');interviews=db.collection('interviews');
  await Promise.all([users.createIndex({email:1},{unique:true}),attempts.createIndex({userId:1,_id:-1}),chats.createIndex({userId:1,_id:-1}),chats.createIndex({convId:1,_id:1}),convs.createIndex({userId:1,updatedAt:-1}),pyqCol.createIndex({exam:1,year:1,s:1}),documents.createIndex({userId:1,_id:-1}),interviews.createIndex({userId:1,_id:-1})]);
- if(ADMINS[0]&&(process.env.ADMIN_PASSWORD||'').length>=8){const email=ADMINS[0],pw=process.env.ADMIN_PASSWORD,u=await users.findOne({email});
+ if(ADMINS[0]&&ADMIN_PASSWORD.length>=8){const email=ADMINS[0],pw=ADMIN_PASSWORD,u=await users.findOne({email});
   if(!u){const salt=crypto.randomBytes(16).toString('hex');await users.insertOne({name:'Admin',gender:'other',category:'General',email,passHash:passwordHash(pw,salt),passSalt:salt,qualification:'grad',exam:'ssc-cgl',createdAt:new Date()});console.log('Admin account created for',email);}
   else if(passwordHash(pw,u.passSalt)!==u.passHash){const salt=crypto.randomBytes(16).toString('hex');await users.updateOne({_id:u._id},{$set:{passHash:passwordHash(pw,salt),passSalt:salt}});console.log('Admin password updated for',email);}}
  await db.command({ping:1});server.listen(PORT,'0.0.0.0',()=>console.log(`Career Sarthii connected to MongoDB and running at http://localhost:${PORT}`));
+  console.log(ADMINS.length&&ADMIN_PASSWORD?`Admin login is ON for: ${ADMINS.map(e=>e.replace(/^(.{3}).*(@.*)$/,'$1***$2')).join(', ')}`:'Admin login is OFF. Set ADMIN_EMAIL and ADMIN_PASSWORD in the Render Environment.');
 }
 start().catch(err=>{console.error('MongoDB connection failed:',err.message);process.exitCode=1;});
 process.on('SIGINT',async()=>{if(client)await client.close();process.exit(0)});
