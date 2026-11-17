@@ -35,7 +35,7 @@ function runQuizNow(el,qs,done,ctx){
   <div>${L(q.o).map((o,k)=>{let c='opt';if(picked!==null){if(k===q.a)c+=' correct';else if(k===picked)c+=' wrong'}return`<button class="${c}" data-k="${k}" ${picked!==null?'disabled':''}>${esc(o)}</button>`}).join('')}</div>
   ${picked===null?'':`<div class="fb ${picked===q.a?'ok':'no'}"><b>${picked===q.a?t('q.correct'):t('q.wrong')+' '+esc(L(q.o)[q.a])}</b><b style="margin-top:8px">${t('q.exp')}</b>${esc(L(q.x))}${q.ai?`<br><i style="opacity:.7">${t('pyq.ai')}</i>`:''}</div>`}
   ${picked===null?'':`<button class="btn" id="nx">${i===qs.length-1?t('q.finish'):t('q.next')}</button>`}`;
-  el.querySelectorAll('.opt').forEach(b=>b.onclick=()=>{frozen=Date.now()-start;picked=+b.dataset.k;res.push({s:qs[i].s,c:qs[i].c,ok:picked===qs[i].a,sec:Math.round(frozen/1000)});if(ctx){const z=qs[i];api('/qlog',{method:'POST',body:JSON.stringify({exam:me.exam,year:ctx.year,paper:ctx.paper,s:z.s,q:z.q,o:z.o,a:z.a,x:z.x||null,picked,ok:picked===z.a,sec:Math.round(frozen/1000),ai:!!z.ai})}).catch(()=>{})}draw()});
+  el.querySelectorAll('.opt').forEach(b=>b.onclick=()=>{frozen=Date.now()-start;picked=+b.dataset.k;res.push({s:qs[i].s,c:qs[i].c,ok:picked===qs[i].a,sec:Math.round(frozen/1000)});if(ctx&&ctx.chap){api('/chap/answer',{method:'POST',body:JSON.stringify({id:qs[i].id,picked,sec:Math.round(frozen/1000)})}).catch(()=>{})}else if(ctx){const z=qs[i];api('/qlog',{method:'POST',body:JSON.stringify({exam:me.exam,year:ctx.year,paper:ctx.paper,s:z.s,q:z.q,o:z.o,a:z.a,x:z.x||null,picked,ok:picked===z.a,sec:Math.round(frozen/1000),ai:!!z.ai})}).catch(()=>{})}draw()});
   const nx=el.querySelector('#nx');if(nx)nx.onclick=()=>{if(i===qs.length-1){clearT();saveAtt(res.map(r=>Object.assign({src:'quiz'},r)));done(res)}else{i++;picked=null;frozen=null;start=Date.now();draw()}};
  }
  hook=draw;timers.push(setInterval(()=>{const e=document.getElementById('qt');if(e&&frozen===null)e.textContent=fmt((Date.now()-start)/1000)},500));draw();
@@ -248,12 +248,23 @@ model(){
 },
 
 chapters(){
- let sid=SUBJECTS[0].id,meta=(window.__meta||{}).chapters||{};
- api('/questions/meta').then(m=>{window.__meta=m;meta=m.chapters;if(location.hash==='#chapters'&&!view.querySelector('#box').innerHTML)draw()}).catch(()=>{});
- const draw=()=>{clearT();view.innerHTML=`${head('chap.t')}<div class="tabs">${SUBJECTS.map(s=>`<button class="tbtn ${s.id===sid?'on':''}" data-s="${s.id}">${esc(L(s))}</button>`).join('')}</div><div class="list">${CHAPTERS.filter(c=>c.s===sid).map(c=>{const n=meta[c.id];return`<button data-c="${c.id}"><b style="font-weight:500">${esc(L(c))}</b><span>${n==null?'':n<0?'∞':n} ${t('chap.n')}</span></button>`}).join('')}</div><div id="box" style="margin-top:20px"></div>`;
-  view.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{sid=b.dataset.s;draw()});
-  view.querySelectorAll('.list button').forEach(b=>b.onclick=async()=>{const box=view.querySelector('#box');box.textContent=t('model.busy');try{const go=async()=>{const qs=await qapi('/questions?c='+b.dataset.c+'&n=10&seed='+Date.now()%1e9);if(!qs.length){box.innerHTML=`<div class="notice">${t('chap.soon')}</div>`;return}runQuiz(box,qs,res=>summary(box,res,go))};await go();box.scrollIntoView({behavior:'smooth',block:'start'})}catch(e){box.textContent=e.message}});
- };draw();hook=null;
+ view.innerHTML=`<div class="hdr"><div>${head('chap.t')}</div><button class="tbtn" id="mya" type="button">${tt('My attempted questions','मेरे हल किए प्रश्न')}</button></div><h3>${esc(exam().n)}</h3><div id="box" style="margin-top:16px"></div>`;
+ const box=view.querySelector('#box'),enc=encodeURIComponent,bkb=`<button class="tbtn" id="bk" type="button">\u2190 ${t('pyq.back')}</button>`;let run=0;
+ const alive=k=>k===run&&document.body.contains(box),bk=f=>{box.querySelector('#bk').onclick=f};
+ const busy=m=>{clearT();box.innerHTML=`<div class="notice">${m||t('model.busy')}</div>`};
+ const subjects=async()=>{const k=++run;busy();try{const r=await api('/chap/subjects?exam='+enc(me.exam));if(!alive(k))return;
+   box.innerHTML=`<p class="hint">${tt('Pick a subject of your exam','अपनी परीक्षा का विषय चुनें')}</p><div class="list">${r.subjects.map(s=>`<button data-s="${s.id}"><b style="font-weight:500">${esc(L(s))}</b><span>${s.n} ${tt('questions in the exam','प्रश्न परीक्षा में')}</span></button>`).join('')}</div>`;
+   box.querySelectorAll('.list button').forEach(b=>b.onclick=()=>chaps(r.subjects.find(s=>s.id===b.dataset.s)))}catch(e){box.textContent=e.message}};
+ const chaps=async s=>{const k=++run;busy(tt('Finding chapters...','चैप्टर खोजे जा रहे हैं...'));try{const r=await api('/chap/list?exam='+enc(me.exam)+'&examName='+enc(exam().n)+'&s='+s.id);if(!alive(k))return;
+   box.innerHTML=`${bkb}<h3 style="margin:14px 0 4px">${esc(L(s))}</h3><p class="hint">${tt('Pick a chapter. Fresh exam style questions are made for you every time.','चैप्टर चुनें। हर बार परीक्षा जैसे नए प्रश्न बनते हैं।')}</p><div class="list">${r.chapters.map((c,i)=>`<button data-i="${i}"><b style="font-weight:500">${i+1}. ${esc(L(c))}</b><span></span></button>`).join('')}</div><div id="qb" style="margin-top:20px"></div>`;
+   bk(subjects);box.querySelectorAll('.list button').forEach(b=>b.onclick=()=>go(s,r.chapters[+b.dataset.i]))}catch(e){box.textContent=e.message}};
+ const go=async(s,c)=>{clearT();const qb=box.querySelector('#qb');qb.innerHTML=`<div class="notice">${tt('Making new questions for','नए प्रश्न बन रहे हैं:')} ${esc(L(c))}... ${tt('about 20 to 40 seconds','लगभग 20 से 40 सेकंड')}</div>`;qb.scrollIntoView({behavior:'smooth',block:'start'});
+  try{const r=await api('/chap/questions',{method:'POST',body:JSON.stringify({exam:me.exam,examName:exam().n,s:s.id,cid:c.id,n:10})});if(!document.body.contains(qb))return;runQuiz(qb,r.questions,res=>summary(qb,res,()=>go(s,c)),{chap:true});qb.scrollIntoView({behavior:'smooth',block:'start'})}catch(e){if(document.body.contains(qb))qb.innerHTML=`<div class="notice">${esc(e.message)}</div>`}};
+ view.querySelector('#mya').onclick=async()=>{const k=++run;busy();try{const r=await api('/chap/attempted?exam='+enc(me.exam));if(!alive(k))return;
+   box.innerHTML=`${bkb}<h3 style="margin:14px 0 4px">${tt('My attempted questions','मेरे हल किए प्रश्न')}</h3><p class="hint">${tt('Pick a subject to see your attempted questions, your answers and explanations.','विषय चुनें और अपने हल किए प्रश्न, उत्तर और व्याख्या देखें।')}</p><div class="list">${r.subjects.length?r.subjects.map(s=>`<button data-s="${s.id}"><b style="font-weight:500">${esc(L(s))}</b><span>${s.ok} / ${s.total} ${tt('correct','सही')}</span></button>`).join(''):`<div class="notice">${tt('You have not attempted any chapter wise question yet.','आपने अभी तक कोई चैप्टर वाइज़ प्रश्न हल नहीं किया है।')}</div>`}</div>`;
+   bk(subjects);box.querySelectorAll('.list button').forEach(b=>b.onclick=async()=>{const s=r.subjects.find(x=>x.id===b.dataset.s),k2=++run;busy();try{const d=await api('/chap/attempted?exam='+enc(me.exam)+'&s='+s.id);if(!alive(k2))return;const cs=[...new Set(d.items.map(x=>x.c))];
+     box.innerHTML=`${bkb}<h3 style="margin:14px 0 4px">${esc(L(s))} <span class="hint">${s.ok} / ${s.total}</span></h3>${cs.map(c=>{const it=d.items.filter(x=>x.c===c);return`<h3 style="margin:20px 0 6px">${esc(L({en:c,hi:it[0].chi}))} <span class="hint">${it.filter(x=>x.ok).length} / ${it.length}</span></h3>`+it.map((x,i)=>qcard(i+1,x,x.picked)).join('')}).join('')}`;bk(()=>view.querySelector('#mya').onclick())}catch(e){box.textContent=e.message}})}catch(e){box.textContent=e.message}};
+ hook=null;subjects();
 },
 
 interview(){
@@ -288,8 +299,8 @@ analysis(){
  const slow=a.slice().sort((x,y)=>y.sec-x.sec).slice(0,5);
  view.innerHTML=`${head('an.t')}<div class="kv"><div class="card"><b>${a.length}</b><span>${t('dash.attempted')}</span></div><div class="card"><b>${a.length?Math.round(ok/a.length*100):0}%</b><span>${t('q.acc')}</span></div><div class="card"><b>${fmt(avg)}</b><span>${t('q.avg')}</span></div><div class="card"><b>${ints.length}</b><span>${t('an.int')}</span></div></div>
  <div class="two" style="gap:32px"><div class="card"><h3>${t('an.by')}</h3><div class="bars">${Object.entries(bs).map(([k,v])=>{const p=Math.round(v.ok/v.n*100);return`<div><div class="lab"><span>${esc(L(subj(k))||k)}</span><span>${p}% (${v.ok}/${v.n})</span></div><div class="track"><div class="fill" style="width:${p}%"></div></div></div>`}).join('')}</div></div>
- <div class="card"><h3>${t('an.weak')}</h3><div class="bars">${weak.map(([k,r,n])=>`<div><div class="lab"><span>${esc(L(chap(k)))}</span><span>${Math.round(r*100)}% (${n})</span></div><div class="track"><div class="fill" style="width:${Math.round(r*100)}%"></div></div></div>`).join('')}</div>
- <h3 style="margin-top:20px">${t('an.slow')}</h3>${slow.map(x=>`<div class="lab" style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:6px"><span>${esc(L(chap(x.c)||subj(x.s)))}</span><span>${x.sec} ${t('sec')}</span></div>`).join('')}</div></div>
+ <div class="card"><h3>${t('an.weak')}</h3><div class="bars">${weak.map(([k,r,n])=>`<div><div class="lab"><span>${esc(L(chap(k))||k)}</span><span>${Math.round(r*100)}% (${n})</span></div><div class="track"><div class="fill" style="width:${Math.round(r*100)}%"></div></div></div>`).join('')}</div>
+ <h3 style="margin-top:20px">${t('an.slow')}</h3>${slow.map(x=>`<div class="lab" style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:6px"><span>${esc(L(chap(x.c)||subj(x.s))||x.c||x.s)}</span><span>${x.sec} ${t('sec')}</span></div>`).join('')}</div></div>
  <p class="hint" style="margin-top:20px">${t('an.ai')}</p>`;
 }};
 

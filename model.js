@@ -125,16 +125,105 @@ Return ONLY a JSON array of exactly ${n} objects with keys in this order: {"q": 
     } catch (e) { await set({ status: 'error', message: String(e.message || e).slice(0, 300) }); }
   }
 
-  async function ensureHi(doc) {
+  async function translateQs(arr) {
     const skip = new Set(['eng', 'hindi']);
     for (let round = 0; round < 3; round++) {
-      const need = []; doc.questions.forEach((q, i) => { if (!skip.has(q.s) && !q.q.hi) need.push(i); });
+      const need = []; arr.forEach((q, i) => { if (!skip.has(q.s) && !q.q.hi) need.push(i); });
       if (!need.length) break;
-      const res = await ctx.translateItems(need.map(i => ({ q: doc.questions[i].q.en, o: doc.questions[i].o.en, x: doc.questions[i].x.en || '' }))).catch(() => null);
+      const res = await ctx.translateItems(need.map(i => ({ q: arr[i].q.en, o: arr[i].o.en, x: arr[i].x.en || '' }))).catch(() => null);
       if (!res) continue;
-      need.forEach((i, k) => { const v = res[k]; if (v) { const q = doc.questions[i]; q.q.hi = v.q; q.o.hi = v.o; q.x.hi = v.x; } });
+      need.forEach((i, k) => { const v = res[k]; if (v) { const q = arr[i]; q.q.hi = v.q; q.o.hi = v.o; q.x.hi = v.x; } });
     }
+  }
+  async function ensureHi(doc) {
+    await translateQs(doc.questions);
     await ctx.modelCol.updateOne({ _id: doc._id }, { $set: { questions: doc.questions } }).catch(() => {});
+  }
+
+  /* ---------- chapter wise ---------- */
+  const slug = (x, i) => String(x).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'c' + i;
+  const subjectOf = (ex, sid) => patternFor(ex).subjects.find(s => s.id === sid);
+  async function chapList(ex, examName, sid) {
+    const key = ex + '|' + sid, hit = await ctx.chapCol.findOne({ _id: key });
+    if (hit && hit.chapters && hit.chapters.length) return hit.chapters;
+    const sub = subjectOf(ex, sid); if (!sub) return null;
+    const prompt = `List ALL the chapters / topics of the subject "${sub.en}" as they are asked in the Indian government exam "${examName}", in a logical syllabus order (12 to 30 items, each a distinct chapter that questions are actually asked from). Subject areas for reference: ${SUB[sid].t}. Return ONLY a JSON array of {"en": chapter name in English, "hi": the same chapter name in Hindi (Devanagari)}.`;
+    const raw = await ctx.gemini([{ role: 'user', parts: [{ text: prompt }] }], { responseMimeType: 'application/json', maxOutputTokens: 6000 }, null, { timeout: 90000 });
+    const list = parseList(raw || '[]'), ids = new Set();
+    const chapters = (Array.isArray(list) ? list : []).filter(x => x && typeof x.en === 'string' && x.en.trim()).slice(0, 40).map((x, i) => ({ id: slug(x.en, i), en: x.en.trim(), hi: String(x.hi || x.en).trim() })).filter(c => !ids.has(c.id) && ids.add(c.id));
+    if (chapters.length < 5) throw new Error('Could not find the chapters. Please try again.');
+    await ctx.chapCol.updateOne({ _id: key }, { $set: { chapters, createdAt: new Date() } }, { upsert: true });
+    return chapters;
+  }
+  async function genChapter({ examName, sub, chap, n, avoid, samples }) {
+    const lang = sub.lang === 'hi' ? 'Write the question, all options and the explanation entirely in Hindi (Devanagari script).' : 'Write in clear English.';
+    const prompt = `You are a senior paper-setter for the Indian government exam "${examName}". Create ${n} NEW multiple-choice questions ONLY from the chapter "${chap.en}" of the subject "${sub.en}".
+Write them exactly in the style, difficulty and patterns in which this exam asks (or can ask) questions from this chapter. Cover the different question types and sub-topics of the chapter; important, frequently asked ideas can come again but always with fresh numbers, data, names or statements.
+${samples.length ? 'Real previous year questions of this exam (style only, never copy):\n- ' + samples.join('\n- ') + '\n' : ''}${avoid.length ? 'Do NOT repeat or paraphrase these questions already given to the student:\n- ' + avoid.join('\n- ') + '\n' : ''}${lang}
+Rules: self-contained text (no figures), exactly one correct option, 4 distinct options without A/B/C/D labels. Prefer timeless facts; avoid news that may be outdated. In "x" give a detailed explanation of 3 to 6 sentences: for maths and reasoning the full step by step working with the formula or trick; for other subjects the concept or fact and briefly why each wrong option is wrong. Work out "x" first, then set "a" to match.
+Return ONLY a JSON array of exactly ${n} objects with keys in this order: {"q": string, "o": [4 strings], "x": string, "a": 0-based index of correct option, "t": sub-topic in 2-3 words}.`;
+    const raw = await ctx.gemini([{ role: 'user', parts: [{ text: prompt }] }], { responseMimeType: 'application/json', maxOutputTokens: 16000 }, null, { timeout: 120000 });
+    const list = parseList(raw || '[]');
+    return (Array.isArray(list) ? list : []).map(clean).filter(Boolean);
+  }
+  async function chapHandle(req, res, url, user, exam) {
+    const p = url.pathname, send = ctx.send, q = url.searchParams;
+    if (p === '/api/chap/subjects' && req.method === 'GET') {
+      const pat = patternFor(exam(q.get('exam')));
+      return send(res, 200, { subjects: pat.subjects.map(s => ({ id: s.id, en: s.en, hi: s.hi, n: s.n })) });
+    }
+    if (p === '/api/chap/list' && req.method === 'GET') {
+      if (!ctx.hasKey) return send(res, 503, { error: 'Chapter wise practice needs the Gemini API key. Ask the admin to set GEMINI_API_KEY.' });
+      const ex = exam(q.get('exam')), chapters = await chapList(ex, String(q.get('examName') || ex).slice(0, 60), String(q.get('s') || '')).catch(e => ({ err: e.message }));
+      if (!chapters) return send(res, 404, { error: 'Subject not found.' });
+      if (chapters.err) return send(res, 502, { error: chapters.err });
+      return send(res, 200, { chapters });
+    }
+    if (p === '/api/chap/questions' && req.method === 'POST') {
+      if (!ctx.hasKey) return send(res, 503, { error: 'Chapter wise practice needs the Gemini API key.' });
+      const b = await ctx.readBody(req), ex = exam(b.exam), examName = String(b.examName || ex).slice(0, 60), sid = String(b.s || ''), sub = subjectOf(ex, sid), n = Math.max(5, Math.min(15, Number(b.n) || 10));
+      if (!sub) return send(res, 404, { error: 'Subject not found.' });
+      const list = await chapList(ex, examName, sid).catch(() => null), chap = list && list.find(c => c.id === b.cid);
+      if (!chap) return send(res, 404, { error: 'Chapter not found.' });
+      if (!ctx.isAdmin(user) && (await ctx.chq.countDocuments({ userId: user._id, createdAt: { $gt: new Date(Date.now() - 86400000) } })) >= 400) return send(res, 429, { error: 'Daily limit reached. Please try again tomorrow.' });
+      const old = await ctx.chq.find({ userId: user._id, exam: ex, s: sid }, { projection: { fp: 1, q: 1, cid: 1 } }).sort({ _id: -1 }).limit(3000).toArray();
+      const seen = new Set(old.map(o => o.fp)), avoid = pick(old.filter(o => o.cid === chap.id).slice(0, 80).map(o => o.q.en.replace(/\s+/g, ' ').slice(0, 90)), 40);
+      const pyq = await ctx.pyqCol.find({ exam: ex, s: sid }, { projection: { q: 1 } }).limit(40).toArray().catch(() => []);
+      const samples = pick(pyq.map(x => String((x.q && x.q.en) || '').replace(/\s+/g, ' ').slice(0, 160)).filter(Boolean), 4);
+      const got = []; let fails = 0, lastErr = null;
+      while (got.length < n && fails < 3) {
+        try {
+          const part = await genChapter({ examName, sub: { ...SUB[sid], en: sub.en, lang: SUB[sid].lang }, chap, n: n - got.length + (fails ? 2 : 0), avoid, samples });
+          let added = 0;
+          for (const x of part) { const k = fp(x.q); if (seen.has(k) || got.length >= n) continue; seen.add(k); avoid.push(x.q.replace(/\s+/g, ' ').slice(0, 90)); got.push({ ...x, fp: k }); added++; }
+          if (!added) fails++;
+        } catch (e) { fails++; lastErr = e; }
+      }
+      if (!got.length) return send(res, 502, { error: 'Question generation failed' + (lastErr ? ': ' + lastErr.message : '') + '. Please try again.' });
+      const docs = got.map(x => ({ userId: user._id, exam: ex, s: sid, cid: chap.id, c: chap.en, chi: chap.hi, fp: x.fp, t: x.t, q: { en: x.q }, o: { en: x.o }, x: { en: x.x }, a: x.a, picked: null, createdAt: new Date() }));
+      await translateQs(docs.map(d => ({ s: sid, q: d.q, o: d.o, x: d.x, _d: d })));
+      await ctx.chq.insertMany(docs);
+      return send(res, 200, { questions: docs.map(d => ({ id: String(d._id), s: sid, c: chap.en, q: d.q, o: d.o, a: d.a, x: d.x })) });
+    }
+    if (p === '/api/chap/answer' && req.method === 'POST') {
+      const b = await ctx.readBody(req);
+      if (!/^[a-f0-9]{24}$/.test(String(b.id || '')) || !Number.isInteger(b.picked) || b.picked < 0 || b.picked > 3) return send(res, 400, { error: 'Invalid answer.' });
+      const d = await ctx.chq.findOne({ _id: new ctx.ObjectId(b.id), userId: user._id });
+      if (!d) return send(res, 404, { error: 'Question not found.' });
+      await ctx.chq.updateOne({ _id: d._id }, { $set: { picked: b.picked, ok: b.picked === d.a, sec: Math.max(0, Math.min(86400, Number(b.sec) || 0)), answeredAt: new Date() } });
+      return send(res, 200, { ok: true });
+    }
+    if (p === '/api/chap/attempted' && req.method === 'GET') {
+      const ex = exam(q.get('exam')), sid = q.get('s'), base = { userId: user._id, exam: ex, picked: { $ne: null } };
+      if (sid) {
+        const rows = await ctx.chq.find({ ...base, s: sid }).sort({ answeredAt: -1 }).limit(2000).toArray();
+        return send(res, 200, { items: rows.map(r => ({ c: r.c, chi: r.chi, q: r.q, o: r.o, a: r.a, x: r.x, picked: r.picked, ok: !!r.ok, sec: r.sec || 0 })) });
+      }
+      const rows = await ctx.chq.find(base, { projection: { s: 1, ok: 1 } }).limit(20000).toArray(), cnt = {};
+      rows.forEach(r => { const e = cnt[r.s] || (cnt[r.s] = { total: 0, ok: 0 }); e.total++; if (r.ok) e.ok++; });
+      return send(res, 200, { subjects: patternFor(ex).subjects.filter(s => cnt[s.id]).map(s => ({ id: s.id, en: s.en, hi: s.hi, total: cnt[s.id].total, ok: cnt[s.id].ok })) });
+    }
+    return send(res, 404, { error: 'API route not found.' });
   }
 
   function compute(doc, answers, spent) {
@@ -177,6 +266,8 @@ Return ONLY a JSON array of exactly ${n} objects with keys in this order: {"q": 
   async function handle(req, res, url, user) {
     const p = url.pathname, send = ctx.send, q = url.searchParams;
     const exam = x => (/^[a-z0-9-]{2,20}$/.test(String(x || '')) ? String(x) : user.exam);
+
+    if (p.startsWith('/api/chap/')) return chapHandle(req, res, url, user, exam);
 
     /* ---------- attempted question log (PYQ) ---------- */
     if (p === '/api/qlog' && req.method === 'POST') {

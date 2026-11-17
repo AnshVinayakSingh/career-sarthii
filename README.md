@@ -78,3 +78,7 @@ Translations are also prepared in advance: right after a paper is imported and w
 - Answers stay on the server until the student submits. Progress autosaves, the timer survives leaving the page, and leaving the test scores unattempted questions 0. Result shows score, subject wise marks and a full review.
 - Collections: `modelpapers`, `qlog` (PYQ attempts with question, answer and explanation). The "My attempted questions" button (top right) is in both PYQ and Model paper.
 - Needs `GEMINI_API_KEY`. Limit: 6 model papers per student per day.
+
+## Chapter wise practice
+
+- Subjects come from the exam pattern in `model.js`. Gemini lists the chapters of each subject once per exam (cached in `chaplist`, Hindi and English names) and makes 10 fresh exam-style questions per click (cached with the student's answers in `chq`). Questions already given to the student are never repeated. Hindi and English are both stored, explanation shows right after each answer, and "My attempted questions" (top right) lists subject, then chapter wise answers.
