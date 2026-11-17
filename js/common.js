@@ -62,6 +62,13 @@ function updTheme(){const b=document.getElementById('themeBtn');if(b)b.textConte
 function applyLang(){document.documentElement.lang=lang;document.querySelectorAll('[data-i18n]').forEach(e=>e.textContent=t(e.dataset.i18n));document.querySelectorAll('[data-i18n-ph]').forEach(e=>e.placeholder=t(e.dataset.i18nPh));const b=document.getElementById('langBtn');if(b)b.textContent=lang==='en'?'हिंदी':'English';updTheme();document.dispatchEvent(new Event('langchange'))}
 document.addEventListener('DOMContentLoaded',()=>{
  const lb=document.getElementById('langBtn'),tb=document.getElementById('themeBtn');
+ const mb=document.getElementById('menuBtn'),hd=document.querySelector('.site-header');
+ if(mb&&hd){const setMenu=o=>{hd.classList.toggle('open',o);mb.setAttribute('aria-expanded',o);mb.textContent=o?'\u2715':'\u2630'};
+  mb.onclick=()=>setMenu(!hd.classList.contains('open'));
+  hd.querySelectorAll('.nav a').forEach(a=>a.addEventListener('click',()=>setMenu(false)));
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&hd.classList.contains('open')){setMenu(false);mb.focus()}});
+  document.addEventListener('click',e=>{if(hd.classList.contains('open')&&!hd.contains(e.target))setMenu(false)});
+  matchMedia('(min-width:861px)').addEventListener('change',e=>{if(e.matches)setMenu(false)})}
  if(lb)lb.onclick=()=>{lang=lang==='en'?'hi':'en';store.set('cs_lang',lang);applyLang()};
  if(tb)tb.onclick=()=>{const m=document.documentElement.dataset.theme==='dark'?'light':'dark';document.documentElement.dataset.theme=m;store.set('cs_theme',m);updTheme();document.dispatchEvent(new Event('themechange'))};
  applyLang();

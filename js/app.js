@@ -79,8 +79,8 @@ chat(){
  const $=q=>view.querySelector(q),cw=$('#cw'),cv=$('#cv'),ms=$('#ms'),mi=$('#mi'),sb=$('#sb'),dn=$('#dn'),rq=$('#rq'),lg=$('#lg');
  let convId=null,busy=false,ctrl=null,quote='',convList=[];
  let lang=store.get('cs_chat_lang',(document.documentElement.lang||'en').startsWith('hi')?'hi':'en');lg.value=lang;lg.onchange=()=>{lang=lg.value;store.set('cs_chat_lang',lang)};
- const fit=()=>{const top=cw.getBoundingClientRect().top;cw.style.height=Math.max(340,window.innerHeight-Math.max(top,0)-12)+'px'};
- fit();addEventListener('resize',fit);hook=()=>removeEventListener('resize',fit);
+ const vv=window.visualViewport,fit=()=>{if(!document.body.contains(cw))return;const top=cw.getBoundingClientRect().top,vh=(vv&&vv.height)||window.innerHeight;cw.style.height=Math.max(300,vh-Math.max(top,0)-12)+'px'};
+ fit();addEventListener('resize',fit);if(vv)vv.addEventListener('resize',fit);hook=()=>{removeEventListener('resize',fit);if(vv)vv.removeEventListener('resize',fit)};
  const near=()=>ms.scrollHeight-ms.scrollTop-ms.clientHeight<140,toEnd=()=>{ms.scrollTop=ms.scrollHeight};
  ms.addEventListener('scroll',()=>dn.classList.toggle('hide',near()));dn.onclick=toEnd;
  const drawer=o=>{cv.classList.toggle('open',o);$('#bd').classList.toggle('hide',!o)};
@@ -395,7 +395,10 @@ function interviewRun(el,lg){
 }
 
 function route(){clearT();const h=(location.hash||'#dashboard').slice(1),k=V[h]?h:'dashboard';
- document.querySelectorAll('#side a.nl').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+k));V[k]();window.scrollTo(0,0)}
+ document.body.dataset.view=k;
+ document.querySelectorAll('#side a.nl').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+k));
+ const sd=document.getElementById('side'),on=sd&&sd.querySelector('a.nl.on');if(on&&sd.scrollWidth>sd.clientWidth)sd.scrollTo({left:on.offsetLeft-(sd.clientWidth-on.offsetWidth)/2,behavior:'smooth'});
+ V[k]();window.scrollTo(0,0)}
 window.addEventListener('hashchange',route);
 document.addEventListener('langchange',()=>{fillExams();if(hook)hook();else if(view.innerHTML)route()});
 const sp=document.querySelector('.topbar .sp'),avA=document.createElement('a');avA.href='#profile';avA.className='av';avA.title='Profile';sp.insertBefore(avA,sp.firstChild);
