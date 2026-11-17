@@ -29,7 +29,7 @@ const mimeTypes={'.html':'text/html; charset=utf-8','.css':'text/css; charset=ut
 const send=(res,status,data,headers={})=>{res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store',...headers});res.end(JSON.stringify(data));};
 const readBody=req=>new Promise((resolve,reject)=>{let chunks=[],size=0;req.on('data',c=>{size+=c.length;if(size>12*1024*1024){reject(new Error('Request too large'));req.destroy();return;}chunks.push(c)});req.on('end',()=>{try{resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')||'{}'))}catch{reject(new Error('Invalid JSON'))}});req.on('error',reject)});
 const cookie=(token,age=60*60*24*14)=>`${cookieName}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax;${IS_PROD?' Secure;':''} Max-Age=${age}`;
-let client,db,users,attempts,chats,convs,documents,interviews,pyqCol,pyqJobs,pyqReports;
+let client,db,users,attempts,chats,convs,documents,interviews,pyqCol,pyqJobs,pyqReports,trans;
 async function sessionUser(req){const value=(req.headers.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith(cookieName+'='));if(!value)return null;const data=jwtVerify(decodeURIComponent(value.slice(cookieName.length+1)));if(!data||!ObjectId.isValid(data.sub))return null;return users.findOne({_id:new ObjectId(data.sub)});}
 async function requireUser(req,res){const u=await sessionUser(req);if(!u)send(res,401,{error:'Please log in again.'});return u;}
 async function createSession(userId,res){res.setHeader('Set-Cookie',cookie(jwtSign({sub:String(userId)})));}
@@ -86,7 +86,7 @@ async function runImport(jobId, { exam, examName, year, label, subject, paper, k
   const setJob = (v) => pyqJobs.updateOne({ _id: jobId }, { $set: v }).catch(console.error);
   try {
     const fixed = SUBJ_IDS.includes(subject) ? subject : null;
-    const prompt = `This PDF is the official question paper of the Indian government exam "${examName}", year ${year} (${label}). Extract EVERY multiple choice question exactly as printed (use the English version, ignore the Hindi duplicate). Return ONLY a JSON array. Each item: {"n": question number, "s": ${fixed ? `"${fixed}"` : 'one of "quant" (maths and quantitative aptitude), "reason" (reasoning), "eng" (English), "hindi" (Hindi language), "sci" (general science), "ga" (general awareness, GK, history, polity, geography, current affairs)'}, "q": question text (include any passage or statements it depends on), "o": array of exactly 4 option texts without the A/B/C/D labels, "a": 0-based index of the correct option, "x": a detailed explanation of 3 to 6 sentences: for maths and reasoning show the full step by step working and the formula used; for English and general awareness explain the concept or fact behind the answer and briefly say why the other options are wrong, "ai": true only if you had to solve it yourself because no answer key was available}. ${key ? 'An answer key PDF is attached after the paper: use it for "a".' : 'No answer key is attached: solve each question carefully and set "ai" to true.'} Skip questions that depend on a picture or figure you cannot express in words, and questions without 4 options. Never invent questions. If this PDF is clearly not the question paper for this exam and year, return an empty array []. No text outside the JSON.`;
+    const prompt = `This PDF is the official question paper of the Indian government exam "${examName}", year ${year} (${label}). Extract EVERY multiple choice question exactly as printed (use the English version and ignore the Hindi duplicate; if the paper is only in Hindi, translate each question, option and explanation into clear English). Return ONLY a JSON array. Each item: {"n": question number, "s": ${fixed ? `"${fixed}"` : 'one of "quant" (maths and quantitative aptitude), "reason" (reasoning), "eng" (English), "hindi" (Hindi language), "sci" (general science), "ga" (general awareness, GK, history, polity, geography, current affairs)'}, "q": question text (include any passage or statements it depends on), "o": array of exactly 4 option texts without the A/B/C/D labels, "a": 0-based index of the correct option, "x": a detailed explanation of 3 to 6 sentences: for maths and reasoning show the full step by step working and the formula used; for English and general awareness explain the concept or fact behind the answer and briefly say why the other options are wrong, "ai": true only if you had to solve it yourself because no answer key was available}. ${key ? 'An answer key PDF is attached after the paper: use it for "a".' : 'No answer key is attached: solve each question carefully and set "ai" to true.'} Skip questions that depend on a picture or figure you cannot express in words, and questions without 4 options. Never invent questions. If this PDF is clearly not the question paper for this exam and year, return an empty array []. No text outside the JSON.`;
     const parts = [{ text: prompt }, { inline_data: { mime_type: 'application/pdf', data: paper } }];
     if (key) parts.push({ text: 'ANSWER KEY:' }, { inline_data: { mime_type: 'application/pdf', data: key } });
     const raw = await gemini([{ role: 'user', parts }], { responseMimeType: 'application/json', maxOutputTokens: 60000 }, null, { timeout: 280000 });
@@ -96,8 +96,35 @@ async function runImport(jobId, { exam, examName, year, label, subject, paper, k
     if (!docs.length) throw new Error('This does not look like the question paper for this exam and year, or no questions could be read. Please check the file.');
     if (await pyqCol.findOne({ exam, year, paper: label })) throw new Error('This paper was just added by someone else.');
     await pyqCol.insertMany(docs);
-    await setJob({ status: 'done', count: docs.length, message: `Saved ${docs.length} questions.` });
+    prefetchTranslations(docs).catch(() => {});
+    await setJob({ status: 'done', count: docs.length, message: `Saved ${docs.length} questions. Hindi translation is being prepared in the background.` });
   } catch (e) { await setJob({ status: 'error', message: e.message }); }
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function translateItems(items) {
+  const keys = items.map(it => crypto.createHash('sha1').update(JSON.stringify([it.q, it.o, it.x])).digest('hex'));
+  const out = new Array(items.length), cached = await trans.find({ _id: { $in: keys } }).toArray(), have = new Map(cached.map(c => [String(c._id), c.v]));
+  let pending = []; keys.forEach((k, i) => { if (have.has(k)) out[i] = have.get(k); else pending.push(i); });
+  const work = async idx => {
+    const batch = idx.map(i => items[i]);
+    const prompt = `Translate these Indian government exam MCQs from English to simple, clear Hindi (Devanagari). Keep numbers, formulas, symbols, names of people and places, and the order of the options exactly as they are. Keep the number of options the same. For "x" (the explanation) translate it fully. Return ONLY a JSON array with exactly ${batch.length} objects in the same order, each {"q": string, "o": array of strings, "x": string}.\nITEMS:\n${JSON.stringify(batch)}`;
+    let list; try { list = JSON.parse(await gemini([{ role: 'user', parts: [{ text: prompt }] }], { responseMimeType: 'application/json', maxOutputTokens: 16000 }, null, { timeout: 90000 })); } catch { return; }
+    if (!Array.isArray(list) || list.length !== batch.length) return;
+    const docs = [];
+    list.forEach((v, j) => { const i = idx[j]; if (v && typeof v.q === 'string' && Array.isArray(v.o) && v.o.length === items[i].o.length && v.o.every(o => typeof o === 'string')) { const val = { q: v.q, o: v.o, x: String(v.x || '') }; out[i] = val; docs.push({ _id: keys[i], v: val, createdAt: new Date() }); } });
+    if (docs.length) await trans.insertMany(docs, { ordered: false }).catch(() => {});
+  };
+  for (let round = 0; round < 3 && pending.length; round++) {
+    if (round) await sleep(1500 * round);
+    const size = round ? 8 : 20, chunks = []; for (let i = 0; i < pending.length; i += size) chunks.push(pending.slice(i, i + size));
+    await Promise.all(chunks.map(work)); pending = pending.filter(i => !out[i]);
+  }
+  return out.map(v => v || null);
+}
+async function prefetchTranslations(list) {
+  const need = list.filter(q => q && q.q && q.q.en && q.o && Array.isArray(q.o.en) && q.s !== 'eng' && q.s !== 'hindi' && !q.q.hi).map(q => ({ q: q.q.en, o: q.o.en, x: (q.x && q.x.en) || '' }));
+  for (let i = 0; i < need.length; i += 20) { try { await translateItems(need.slice(i, i + 20)); } catch (e) { console.error('prefetch', e.message); } }
 }
 const localFeedback = (answers, lg) => answers.map((a, i) => { const w = String(a.a || '').split(/\s+/).filter(Boolean).length; const tips = []; if (w < 20) tips.push(lg === 'hi' ? 'उत्तर बहुत छोटा है, कम से कम 3 से 4 वाक्य बोलें।' : 'Answer is very short; aim for at least 3 to 4 sentences.'); else if (w > 150) tips.push(lg === 'hi' ? 'उत्तर लंबा है, मुख्य बिंदुओं पर टिके रहें।' : 'Answer is long; keep to the main points.'); if (!/\d|for example|such as|उदाहरण|जैसे/i.test(a.a || '')) tips.push(lg === 'hi' ? 'एक उदाहरण या तथ्य जोड़ें।' : 'Add one specific example or fact.'); if (!tips.length) tips.push(lg === 'hi' ? 'उत्तर संतुलित है। अंत में एक संक्षिप्त निष्कर्ष जोड़ें।' : 'Good length. End with a short closing line.'); return `${i + 1}. ${tips.join(' ')}`; }).join('\n') + '\n\n' + (lg === 'hi' ? '(AI फीडबैक के लिए GEMINI_API_KEY जोड़ें।)' : '(Add GEMINI_API_KEY for detailed AI feedback.)');
 const seededPaper=()=>[
@@ -235,6 +262,14 @@ const server=http.createServer(async(req,res)=>{
     if(url.pathname==='/api/admin/pyq/dismiss'&&req.method==='POST'){const{exam,year,label}=sel();await pyqReports.deleteMany({exam,year,label});return send(res,200,{ok:true});}
     if(url.pathname==='/api/admin/pyq'&&req.method==='DELETE'){const{exam,year,label}=sel();if(!exam||!year)return send(res,400,{error:'exam and year required'});await Promise.all([pyqCol.deleteMany({exam,year,paper:label}),pyqReports.deleteMany({exam,year,label})]);return send(res,200,{ok:true});}
    }
+   if(url.pathname==='/api/translate'&&req.method==='POST'){
+    const b=await readBody(req),items=Array.isArray(b.items)?b.items.slice(0,100):[];
+    const ok=items.length&&items.every(it=>it&&typeof it.q==='string'&&Array.isArray(it.o)&&it.o.length>=2&&it.o.length<=6&&it.o.every(o=>typeof o==='string'));
+    if(!ok||JSON.stringify(items).length>80000)return send(res,400,{error:'Nothing to translate.'});
+    items.forEach(it=>{it.x=String(it.x||'')});
+    if(!GEMINI_API_KEY){const hit=await translateItems(items).catch(()=>items.map(()=>null));return send(res,200,{items:hit});}
+    try{return send(res,200,{items:await translateItems(items)});}catch(e){return send(res,502,{error:'Translation failed: '+e.message});}
+   }
    if(url.pathname==='/api/questions/meta'&&req.method==='GET')return send(res,200,Q.meta());
    if(url.pathname==='/api/questions'&&req.method==='GET'){
     const p=url.searchParams,n=Math.max(1,Math.min(100,Number(p.get('n'))||20)),seed=Number(p.get('seed'))||Math.floor(Math.random()*1e9);
@@ -255,13 +290,14 @@ async function start(){
  if(!JWT_SECRET||JWT_SECRET.length<16){console.error('JWT_SECRET is required (at least 16 characters).');process.exitCode=1;return;}
  if(!MONGODB_URI){console.error('MongoDB is required. Add MONGODB_URI to your .env file.');process.exitCode=1;return;}
  client=new MongoClient(MONGODB_URI);await client.connect();db=client.db(DB_NAME);
- users=db.collection('users');attempts=db.collection('attempts');chats=db.collection('chats');convs=db.collection('convs');pyqCol=db.collection('pyq');pyqJobs=db.collection('pyqjobs');pyqReports=db.collection('pyqreports');documents=db.collection('documents');interviews=db.collection('interviews');
+ users=db.collection('users');attempts=db.collection('attempts');chats=db.collection('chats');convs=db.collection('convs');pyqCol=db.collection('pyq');pyqJobs=db.collection('pyqjobs');pyqReports=db.collection('pyqreports');trans=db.collection('translations');documents=db.collection('documents');interviews=db.collection('interviews');
  await Promise.all([users.createIndex({email:1},{unique:true}),attempts.createIndex({userId:1,_id:-1}),chats.createIndex({userId:1,_id:-1}),chats.createIndex({convId:1,_id:1}),convs.createIndex({userId:1,updatedAt:-1}),pyqCol.createIndex({exam:1,year:1,s:1}),documents.createIndex({userId:1,_id:-1}),interviews.createIndex({userId:1,_id:-1})]);
  if(ADMINS[0]&&ADMIN_PASSWORD.length>=8){const email=ADMINS[0],pw=ADMIN_PASSWORD,u=await users.findOne({email});
   if(!u){const salt=crypto.randomBytes(16).toString('hex');await users.insertOne({name:'Admin',gender:'other',category:'General',email,passHash:passwordHash(pw,salt),passSalt:salt,qualification:'grad',exam:'ssc-cgl',createdAt:new Date()});console.log('Admin account created for',email);}
   else if(passwordHash(pw,u.passSalt)!==u.passHash){const salt=crypto.randomBytes(16).toString('hex');await users.updateOne({_id:u._id},{$set:{passHash:passwordHash(pw,salt),passSalt:salt}});console.log('Admin password updated for',email);}}
  await db.command({ping:1});server.listen(PORT,'0.0.0.0',()=>console.log(`Career Sarthii connected to MongoDB and running at http://localhost:${PORT}`));
   console.log(ADMINS.length&&ADMIN_PASSWORD?`Admin login is ON for: ${ADMINS.map(e=>e.replace(/^(.{3}).*(@.*)$/,'$1***$2')).join(', ')}`:'Admin login is OFF. Set ADMIN_EMAIL and ADMIN_PASSWORD in the Render Environment.');
+  if(GEMINI_API_KEY)setTimeout(async()=>{try{await prefetchTranslations(Q.bankAll());await prefetchTranslations(await pyqCol.find({}).toArray());}catch(e){console.error('prefetch',e.message)}},Number(process.env.PREFETCH_DELAY_MS)||8000);
 }
 start().catch(err=>{console.error('MongoDB connection failed:',err.message);process.exitCode=1;});
 process.on('SIGINT',async()=>{if(client)await client.close();process.exit(0)});

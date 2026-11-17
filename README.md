@@ -65,3 +65,8 @@ This is a runnable local application, not a production deployment. The seeded qu
 ## Admin login
 
 Set `ADMIN_EMAIL` and `ADMIN_PASSWORD` (8+ characters) in Render. On every start the server creates that account (or resets its password to the value you set). Log in on the normal login page with them and you land on the Admin page.
+
+## Hindi / English questions
+
+When the site is in Hindi, questions that only exist in English are translated by Gemini (with retries on other models when busy) and cached in MongoDB (`translations`), so every later student gets them instantly. English language and Hindi language subject questions are never translated. Papers that exist only in Hindi are translated into English when they are imported.
+Translations are also prepared in advance: right after a paper is imported and when the server starts (question bank and every saved paper), so students rarely wait.

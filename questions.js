@@ -113,4 +113,4 @@ const paper = (n, seed) => { const a = Math.round(n * .3), b = Math.round(n * .3
 const meta = () => { const chapters = {}; Object.keys(SUBJ).forEach(c => (chapters[c] = GEN[c] ? -1 : (byChapter[c] || []).length)); return { chapters, pyq: pyqYears() }; };
 
 const pyqList = exam => PYQ.filter(p => p.exam === exam);
-module.exports = { forChapter, mix, paper, meta, pyqFor, pyqList, loadPyq };
+module.exports = { bankAll: () => BANK, forChapter, mix, paper, meta, pyqFor, pyqList, loadPyq };

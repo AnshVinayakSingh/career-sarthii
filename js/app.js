@@ -18,7 +18,14 @@ sel.onchange=()=>{me.exam=sel.value;all[em]=me;store.set('cs_users',all);api('/p
 document.getElementById('logout').onclick=async()=>{try{await api('/logout',{method:'POST'})}finally{store.set('cs_session',null);location.href='index.html'}};
 
 /* practice quiz with instant feedback and per question timer */
-function runQuiz(el,qs,done){
+const noTr=q=>q.s==='eng'||q.s==='hindi'||(q.q&&q.q.hi);
+async function trQs(qs){const need=qs.filter(q=>!noTr(q));
+ for(let round=0;round<4;round++){const todo=need.filter(q=>!(q.q&&q.q.hi));if(!todo.length)return;if(round)await new Promise(r=>setTimeout(r,2000*round));
+  const parts=[];for(let i=0;i<todo.length;i+=30)parts.push(todo.slice(i,i+30));
+  await Promise.all(parts.map(async part=>{try{const r=await api('/translate',{method:'POST',body:JSON.stringify({items:part.map(q=>({q:q.q.en,o:q.o.en,x:(q.x&&q.x.en)||''}))})});part.forEach((q,k)=>{const v=r.items[k];if(v){q.q.hi=v.q;q.o.hi=v.o;q.x=q.x||{};q.x.hi=v.x}})}catch{}}))}}
+function withTr(el,qs,go){if(lang!=='hi'||!qs.some(q=>!noTr(q)))return go();el.innerHTML=`<div class="notice">${t('tr.busy')}</div>`;trQs(qs).then(go,()=>{el.innerHTML=`<div class="notice">${t('tr.fail')}</div>`;setTimeout(go,1800)})}
+function runQuiz(el,qs,done){withTr(el,qs,()=>runQuizNow(el,qs,done))}
+function runQuizNow(el,qs,done){
  let i=0,picked=null,start=Date.now(),frozen=null,res=[];
  function draw(){const q=qs[i];
   el.innerHTML=`<div class="qhead"><span>${i+1} ${t('q.of')} ${qs.length}</span><span class="timer" id="qt">${fmt((frozen??(Date.now()-start))/1000)}</span></div>
@@ -218,7 +225,8 @@ analysis(){
 }};
 
 /* three hour model paper */
-function paper(el,source=shuffle(QUESTIONS)){
+function paper(el,source=shuffle(QUESTIONS)){withTr(el,source,()=>paperNow(el,source))}
+function paperNow(el,source){
  const qs=shuffle(source),ans=qs.map(()=>null),spent=qs.map(()=>0);let cur=0,mark=Date.now(),total=Math.max(60,qs.length*72),end=Date.now()+total*1000,over=false;
  const lap=()=>{spent[cur]+=(Date.now()-mark)/1000;mark=Date.now()};
  function draw(){const q=qs[cur];
