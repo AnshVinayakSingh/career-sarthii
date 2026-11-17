@@ -8,6 +8,8 @@ const subj=id=>SUBJECTS.find(s=>s.id===id),chap=id=>CHAPTERS.find(c=>c.id===id);
 const fmt=s=>{s=Math.max(0,Math.round(s));const h=Math.floor(s/3600),m=Math.floor(s%3600/60),r=s%60;return(h?h+':'+String(m).padStart(2,'0'):m)+':'+String(r).padStart(2,'0')};
 const shuffle=a=>{a=a.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a};
 const md=x=>{const code=[];let h=esc(x).replace(/```(?:\w+)?\n?([\s\S]*?)```/g,(_,c)=>{code.push(c);return '\u0000'+(code.length-1)+'\u0000'});h=h.replace(/`([^`\n]+)`/g,'<code>$1</code>').replace(/\*\*(.+?)\*\*/g,'<b>$1</b>');const out=[];let list=null;for(const ln of h.split('\n')){let m;if(m=ln.match(/^\s*(?:[-*\u2022]|\d+[.)])\s+(.*)/)){const o=/^\s*\d/.test(ln)?'ol':'ul';if(list!==o){if(list)out.push('</'+list+'>');out.push('<'+o+'>');list=o}out.push('<li>'+m[1]+'</li>');continue}if(list){out.push('</'+list+'>');list=null}if(m=ln.match(/^&gt;\s?(.*)/)){out.push('<blockquote>'+m[1]+'</blockquote>');continue}if(m=ln.match(/^#{1,4}\s+(.*)/)){out.push('<h4>'+m[1]+'</h4>');continue}out.push(ln.trim()===''?'<div class="gap"></div>':'<div>'+ln+'</div>')}if(list)out.push('</'+list+'>');return out.join('').replace(/\u0000(\d+)\u0000/g,(_,i)=>'<pre><code>'+code[i]+'</code></pre>')};
+const tt=(a,b)=>lang==='hi'?b:a,fm=x=>+(+x).toFixed(2);
+const qcard=(i,q,pk,extra)=>`<div class="fb ${pk==null?'':pk===q.a?'ok':'no'}"><b>${i}. ${esc(L(q.q))}</b>${L(q.o).map((o,k)=>`<div>${k===q.a?'\u2713 ':k===pk?'\u2717 ':'\u2022 '}${esc(o)}${k===pk?' \u2190 '+tt('your answer','आपका उत्तर'):''}</div>`).join('')}<div style="margin-top:6px"><i>${t('q.exp')}:</i> ${esc(L(q.x)||'')}</div>${extra||''}</div>`;
 const qapi=async path=>{const r=await api(path);return r.questions};
 let timers=[],hook=null;
 const clearT=()=>{timers.forEach(clearInterval);timers=[];hook=null};
@@ -24,8 +26,8 @@ async function trQs(qs){const need=qs.filter(q=>!noTr(q));
   const parts=[];for(let i=0;i<todo.length;i+=30)parts.push(todo.slice(i,i+30));
   await Promise.all(parts.map(async part=>{try{const r=await api('/translate',{method:'POST',body:JSON.stringify({items:part.map(q=>({q:q.q.en,o:q.o.en,x:(q.x&&q.x.en)||''}))})});part.forEach((q,k)=>{const v=r.items[k];if(v){q.q.hi=v.q;q.o.hi=v.o;q.x=q.x||{};q.x.hi=v.x}})}catch{}}))}}
 function withTr(el,qs,go){if(lang!=='hi'||!qs.some(q=>!noTr(q)))return go();el.innerHTML=`<div class="notice">${t('tr.busy')}</div>`;trQs(qs).then(go,()=>{el.innerHTML=`<div class="notice">${t('tr.fail')}</div>`;setTimeout(go,1800)})}
-function runQuiz(el,qs,done){withTr(el,qs,()=>runQuizNow(el,qs,done))}
-function runQuizNow(el,qs,done){
+function runQuiz(el,qs,done,ctx){withTr(el,qs,()=>runQuizNow(el,qs,done,ctx))}
+function runQuizNow(el,qs,done,ctx){
  let i=0,picked=null,start=Date.now(),frozen=null,res=[];
  function draw(){const q=qs[i];
   el.innerHTML=`<div class="qhead"><span>${i+1} ${t('q.of')} ${qs.length}</span><span class="timer" id="qt">${fmt((frozen??(Date.now()-start))/1000)}</span></div>
@@ -33,7 +35,7 @@ function runQuizNow(el,qs,done){
   <div>${L(q.o).map((o,k)=>{let c='opt';if(picked!==null){if(k===q.a)c+=' correct';else if(k===picked)c+=' wrong'}return`<button class="${c}" data-k="${k}" ${picked!==null?'disabled':''}>${esc(o)}</button>`}).join('')}</div>
   ${picked===null?'':`<div class="fb ${picked===q.a?'ok':'no'}"><b>${picked===q.a?t('q.correct'):t('q.wrong')+' '+esc(L(q.o)[q.a])}</b><b style="margin-top:8px">${t('q.exp')}</b>${esc(L(q.x))}${q.ai?`<br><i style="opacity:.7">${t('pyq.ai')}</i>`:''}</div>`}
   ${picked===null?'':`<button class="btn" id="nx">${i===qs.length-1?t('q.finish'):t('q.next')}</button>`}`;
-  el.querySelectorAll('.opt').forEach(b=>b.onclick=()=>{frozen=Date.now()-start;picked=+b.dataset.k;res.push({s:qs[i].s,c:qs[i].c,ok:picked===qs[i].a,sec:Math.round(frozen/1000)});draw()});
+  el.querySelectorAll('.opt').forEach(b=>b.onclick=()=>{frozen=Date.now()-start;picked=+b.dataset.k;res.push({s:qs[i].s,c:qs[i].c,ok:picked===qs[i].a,sec:Math.round(frozen/1000)});if(ctx){const z=qs[i];api('/qlog',{method:'POST',body:JSON.stringify({exam:me.exam,year:ctx.year,paper:ctx.paper,s:z.s,q:z.q,o:z.o,a:z.a,x:z.x||null,picked,ok:picked===z.a,sec:Math.round(frozen/1000),ai:!!z.ai})}).catch(()=>{})}draw()});
   const nx=el.querySelector('#nx');if(nx)nx.onclick=()=>{if(i===qs.length-1){clearT();saveAtt(res.map(r=>Object.assign({src:'quiz'},r)));done(res)}else{i++;picked=null;frozen=null;start=Date.now();draw()}};
  }
  hook=draw;timers.push(setInterval(()=>{const e=document.getElementById('qt');if(e&&frozen===null)e.textContent=fmt((Date.now()-start)/1000)},500));draw();
@@ -125,7 +127,7 @@ chat(){
 },
 
 pyq(){
- view.innerHTML=`${head('pyq.t','pyq.d')}<h3>${esc(exam().n)}</h3><div id="box" style="margin-top:16px"></div>`;
+ view.innerHTML=`<div class="hdr"><div>${head('pyq.t','pyq.d')}</div><button class="tbtn" id="mya" type="button">${tt('My attempted questions','मेरे हल किए प्रश्न')}</button></div><h3>${esc(exam().n)}</h3><div id="box" style="margin-top:16px"></div>`;
  const box=view.querySelector('#box');let ov=null;
  const EXTRA={hindi:{en:'Hindi',hi:'\u0939\u093f\u0902\u0926\u0940'},sci:{en:'General Science',hi:'\u0938\u093e\u092e\u093e\u0928\u094d\u092f \u0935\u093f\u091c\u094d\u091e\u093e\u0928'}};
  const sname=id=>{const x=SUBJECTS.find(v=>v.id===id)||EXTRA[id];return x?L(x):id};
@@ -142,7 +144,7 @@ pyq(){
   back(()=>papers(y));
   const rp=box.querySelector('#rp'),rf=box.querySelector('#rf');rp.onclick=()=>rf.classList.toggle('hide');
   box.querySelector('#rs').onclick=async()=>{try{await api('/pyq/report',{method:'POST',body:JSON.stringify({exam:me.exam,year:y.year,label:p.label,note:box.querySelector('#rn').value})});rf.classList.add('hide');rp.textContent='\u2605 '+t('pyq.reped');rp.disabled=true}catch(e){alert(e.message)}};
-  const go=async s=>{const qb=box.querySelector('#qb');clearT();qb.textContent=t('model.busy');try{const r=await api('/pyq/paper?exam='+encodeURIComponent(me.exam)+'&year='+y.year+'&label='+lab+(s==='all'?'':'&s='+s));if(!r.questions.length){qb.innerHTML=`<div class="notice">${t('pyq.none')}</div>`;return}runQuiz(qb,r.questions,res=>summary(qb,res,()=>go(s)));qb.scrollIntoView({behavior:'smooth',block:'start'})}catch(e){qb.textContent=e.message}};
+  const go=async s=>{const qb=box.querySelector('#qb');clearT();qb.textContent=t('model.busy');try{const r=await api('/pyq/paper?exam='+encodeURIComponent(me.exam)+'&year='+y.year+'&label='+lab+(s==='all'?'':'&s='+s));if(!r.questions.length){qb.innerHTML=`<div class="notice">${t('pyq.none')}</div>`;return}runQuiz(qb,r.questions,res=>summary(qb,res,()=>go(s)),{year:y.year,paper:p.label});qb.scrollIntoView({behavior:'smooth',block:'start'})}catch(e){qb.textContent=e.message}};
   box.querySelectorAll('.list button').forEach(b=>b.onclick=()=>go(b.dataset.s))};
  const upload=(y,label)=>{clearT();box.dataset.m='u';const busy=label&&y.processing.includes(label);
   box.innerHTML=`<button class="tbtn" id="bk" type="button">\u2190 ${t('pyq.back')}</button><h3 style="margin:14px 0 6px">${esc(exam().n)} ${y.year}</h3><div class="notice">${busy?t('pyq.busy'):t('pyq.need')}</div>${busy?'':`<div class="field" style="margin-top:16px"><label for="al">${t('pyq.label')}</label><input id="al" list="pl" maxlength="30" value="${esc(label)}" placeholder="Paper 1, Paper 2, Shift 1..."><datalist id="pl">${['Paper 1','Paper 2','Shift 1','Shift 2','Shift 3','Shift 4','Shift 5','Shift 6'].map(x=>`<option value="${x}">`).join('')}</datalist></div><div class="field"><label for="af">${t('pyq.paperpdf')}</label><input type="file" id="af" accept="application/pdf"></div><div class="field"><label for="ak">${t('pyq.keypdf')}</label><input type="file" id="ak" accept="application/pdf"></div><button class="btn" id="go" type="button">${t('pyq.send')}</button>`}<p class="hint" id="am" style="margin-top:12px"></p>`;
@@ -154,6 +156,11 @@ pyq(){
     const poll=async()=>{if(!document.body.contains(am))return;const j=await api('/pyq/job/'+r.jobId);am.textContent=j.message;if(j.status==='running'){setTimeout(poll,3000)}else if(j.status==='done'){await refresh();const ny=ov.years.find(v=>v.year===y.year),np=ny&&ny.papers.find(v=>v.label===lb);if(np)subjects(ny,np)}else go.disabled=false};poll()}
    catch(e){am.textContent=e.message;go.disabled=false}}};
  const refresh=()=>api('/pyq/overview?exam='+encodeURIComponent(me.exam)).then(r=>{ov=r;if(box.dataset.m==='y')years()}).catch(e=>{box.textContent=e.message});
+ const attGroup=async g=>{clearT();box.dataset.m='a2';box.innerHTML=`<button class="tbtn" id="bk" type="button">\u2190 ${t('pyq.back')}</button><h3 style="margin:14px 0 4px">${esc(exam().n)} ${g.year} \u00b7 ${esc(g.paper)}</h3><div id="ab">${t('model.busy')}</div>`;back(att);
+  try{const r=await api('/qlog?exam='+encodeURIComponent(me.exam)+'&year='+g.year+'&paper='+encodeURIComponent(g.paper)),ab=box.querySelector('#ab'),ids=[...new Set(r.items.map(x=>x.s))];ab.innerHTML=ids.map(s=>{const it=r.items.filter(x=>x.s===s);return`<h3 style="margin:20px 0 6px">${esc(sname(s))} <span class="hint">${it.filter(x=>x.ok).length} / ${it.length}</span></h3>`+it.map((x,i)=>qcard(i+1,x,x.picked,x.times>1?`<div class="hint">${tt('Attempted','हल किया')} ${x.times} ${tt('times, latest shown','बार, आखिरी दिखाया गया')}</div>`:'')).join('')}).join('')}catch(e){box.querySelector('#ab').textContent=e.message}};
+ const att=async()=>{clearT();box.dataset.m='a';box.innerHTML=`<button class="tbtn" id="bk" type="button">\u2190 ${t('pyq.back')}</button><h3 style="margin:14px 0 4px">${tt('My attempted questions','मेरे हल किए प्रश्न')}</h3><p class="hint">${tt('Pick the year to see your attempted questions, your answers and explanations.','वर्ष चुनें और अपने हल किए प्रश्न, उत्तर और व्याख्या देखें।')}</p><div class="list" id="ag">${t('model.busy')}</div>`;back(years);
+  try{const r=await api('/qlog?exam='+encodeURIComponent(me.exam)),ag=box.querySelector('#ag');ag.innerHTML=r.groups.length?r.groups.map((g,i)=>`<button data-i="${i}"><b style="font-weight:500">${g.year} \u00b7 ${esc(g.paper)}</b><span>${g.ok} / ${g.total} ${tt('correct','सही')}</span></button>`).join(''):`<div class="notice">${tt('You have not attempted any previous year question yet.','आपने अभी तक कोई पिछले वर्ष का प्रश्न हल नहीं किया है।')}</div>`;ag.querySelectorAll('button').forEach(b=>b.onclick=()=>attGroup(r.groups[+b.dataset.i]))}catch(e){box.querySelector('#ag').textContent=e.message}};
+ view.querySelector('#mya').onclick=att;
  years();refresh();
 },
 
@@ -172,10 +179,72 @@ admin(){
 },
 
 model(){
- view.innerHTML=`${head('model.t','model.d')}<div class="acts"><button class="btn" id="gen">${t('model.gen')}</button><button class="btn ghost" id="ai">${t('model.ai')}</button></div><div id="box" style="margin-top:24px"></div>`;
- const box=view.querySelector('#box');
- view.querySelector('#gen').onclick=async()=>{clearT();box.textContent=t('model.busy');try{paper(box,await qapi('/questions?paper=1&n=50&seed='+Date.now()%1e9))}catch(e){box.textContent=e.message}};
- view.querySelector('#ai').onclick=async()=>{clearT();box.textContent=t('model.busy');try{const r=await api('/ai/paper',{method:'POST',body:'{}'});paper(box,r.questions)}catch(e){box.textContent=e.message}};
+ view.innerHTML=`<div class="hdr"><div>${head('model.t')}</div><button class="tbtn" id="mya" type="button">${tt('My attempted questions','मेरे हल किए प्रश्न')}</button></div><h3>${esc(exam().n)}</h3><div id="box" style="margin-top:16px"></div>`;
+ const box=view.querySelector('#box'),enc=encodeURIComponent;let info=null,run=0;
+ const busy=m=>{clearT();box.innerHTML=`<div class="notice">${m||t('model.busy')}</div>`};
+ const alive=k=>k===run&&document.body.contains(box);
+ const bk=(f,l)=>{const b=box.querySelector('#bk');if(b)b.onclick=f};
+ const stTxt=p=>p.status==='done'?tt('Score','स्कोर')+' '+fm(p.score)+' / '+fm(p.max):p.status==='started'?tt('In progress, resume','जारी है, आगे बढ़ें'):p.status==='generating'?tt('Being prepared...','तैयार हो रहा है...'):tt('Ready, not started','तैयार, शुरू नहीं हुआ');
+ const pTable=p=>`<div style="overflow-x:auto"><table class="pt"><tr><th>${tt('Subject','विषय')}</th><th>${tt('Questions','प्रश्न')}</th><th>${tt('Marks per question','अंक प्रति प्रश्न')}</th><th>${tt('Negative marking','नेगेटिव मार्किंग')}</th><th>${tt('Total marks','कुल अंक')}</th></tr>${p.subjects.map(s=>`<tr><td>${esc(L(s))}</td><td>${s.n}</td><td>${fm(s.m)}</td><td>${s.neg?'-'+fm(s.neg):'0'}</td><td>${fm(s.n*s.m)}</td></tr>`).join('')}<tr class="tot"><td>${tt('Total','कुल')}</td><td>${p.q}</td><td></td><td></td><td>${fm(p.marks)}</td></tr></table></div>`;
+ const home=async()=>{const k=++run;busy();try{info=await api('/model/info?exam='+enc(me.exam));if(!alive(k))return;drawHome()}catch(e){box.textContent=e.message}};
+ const drawHome=()=>{clearT();const p=info.pattern,nx=(info.papers.reduce((a,x)=>Math.max(a,x.no),0))+1;
+  box.innerHTML=`<div class="card"><b>${tt('Exam pattern','परीक्षा पैटर्न')}: ${p.q} ${tt('questions','प्रश्न')} · ${fm(p.marks)} ${tt('marks','अंक')} · ${p.dur} ${tt('minutes','मिनट')}</b>${p.note?`<div class="hint">${esc(L(p.note))}</div>`:''}${pTable(p)}<div class="hint">${tt('Real exam style: you see answers and your score only after you submit. Each new paper has fresh questions of the same type and trend as previous year papers.','असली परीक्षा की तरह: उत्तर और स्कोर सबमिट करने के बाद ही दिखेंगे। हर नया पेपर पिछले वर्षों के प्रकार और ट्रेंड के नए प्रश्नों का होता है।')}</div></div>
+  <div class="list" style="margin-top:20px">${info.papers.map((x,i)=>`<button data-i="${i}"><b style="font-weight:500">${tt('Model Paper','मॉडल पेपर')} ${x.no}</b><span>${stTxt(x)}</span></button>`).join('')}</div>
+  <button class="btn" id="mk" type="button" style="margin-top:8px">+ ${tt('Generate Model Paper','मॉडल पेपर बनाएँ')} ${nx}</button><p class="hint" id="mm"></p>`;
+  box.querySelectorAll('.list button').forEach(b=>b.onclick=()=>open(info.papers[+b.dataset.i].id));
+  box.querySelector('#mk').onclick=async()=>{const b=box.querySelector('#mk');b.disabled=true;try{const r=await api('/model/create',{method:'POST',body:JSON.stringify({exam:me.exam,examName:exam().n})});open(r.id)}catch(e){box.querySelector('#mm').textContent=e.message;b.disabled=false}};
+ };
+ const open=async id=>{const k=++run;busy();try{
+   let p=await api('/model/paper?id='+id+'&lang='+lang);if(!alive(k))return;
+   if(p.status==='generating'){return waitGen(id,k,p)}
+   if(p.status==='error'){box.innerHTML=`<button class="tbtn" id="bk" type="button">\u2190 ${t('pyq.back')}</button><div class="notice" style="margin-top:14px">${esc(p.message)}</div>`;bk(home);return}
+   if(p.status==='ready')return intro(p);
+   if(p.status==='started')return runTest(p);
+   result(p,p.fresh);
+  }catch(e){box.textContent=e.message}};
+ const waitGen=(id,k,p)=>{const draw=p=>{box.innerHTML=`<button class="tbtn" id="bk" type="button">\u2190 ${t('pyq.back')}</button><h3 style="margin:14px 0 6px">${tt('Model Paper','मॉडल पेपर')} ${p.no}</h3><div class="notice">${tt('Preparing your paper in the exam pattern. This takes a few minutes. Questions ready','आपका पेपर परीक्षा पैटर्न में तैयार हो रहा है। इसमें कुछ मिनट लगते हैं। तैयार प्रश्न')}: ${p.progress} / ${p.total}</div>`;bk(home)};draw(p);
+  const poll=async()=>{if(!alive(k))return;try{const n=await api('/model/paper?id='+id+'&lang='+lang);if(!alive(k))return;if(n.status==='generating'){draw(n);setTimeout(poll,3000)}else open(id)}catch(e){box.textContent=e.message}};setTimeout(poll,3000)};
+ const intro=p=>{const tq=p.questions.length,mk=p.subjects.reduce((a,s)=>a+s.n*s.m,0);
+  box.innerHTML=`<button class="tbtn" id="bk" type="button">\u2190 ${t('pyq.back')}</button><h3 style="margin:14px 0 6px">${tt('Model Paper','मॉडल पेपर')} ${p.no}</h3><div class="card"><b>${tq} ${tt('questions','प्रश्न')} · ${fm(mk)} ${tt('marks','अंक')} · ${p.dur} ${tt('minutes','मिनट')}</b>${pTable({subjects:p.subjects,q:tq,marks:mk})}<ul class="hint"><li>${tt('The timer starts when you press Start and keeps running even if you leave this page.','स्टार्ट दबाते ही टाइमर शुरू हो जाता है और पेज छोड़ने पर भी चलता रहता है।')}</li><li>${tt('Answers and your score appear only after you submit.','उत्तर और स्कोर सबमिट करने के बाद ही दिखेंगे।')}</li><li>${tt('If you leave the test, unattempted questions score 0 and your attempted ones are marked.','टेस्ट छोड़ने पर हल न किए प्रश्नों के 0 अंक मिलेंगे और हल किए प्रश्नों की मार्किंग होगी।')}</li></ul></div><button class="btn" id="st" type="button" style="margin-top:16px">${tt('Start test','टेस्ट शुरू करें')}</button><p class="hint" id="sm"></p>`;
+  bk(home);const b=box.querySelector('#st');b.onclick=async()=>{b.disabled=true;box.querySelector('#sm').textContent=t('model.busy');try{const r=await api('/model/start',{method:'POST',body:JSON.stringify({id:p.id,lang})});runTest(r)}catch(e){box.querySelector('#sm').textContent=e.message;b.disabled=false}}};
+ function runTest(p){clearT();const k=++run,qs=p.questions,N=qs.length,ans=Array.from({length:N},(_,i)=>p.answers[i]??null),spent=Array.from({length:N},(_,i)=>+p.spent[i]||0),off=p.now-Date.now(),endAt=p.endsAt;
+  let cur=Math.max(0,ans.findIndex(x=>x===null)),mark=Date.now(),over=false;
+  const left=()=>(endAt-(Date.now()+off))/1000,lap=()=>{spent[cur]+=(Date.now()-mark)/1000;mark=Date.now()};
+  const save=()=>{lap();api('/model/save',{method:'POST',body:JSON.stringify({id:p.id,answers:ans,spent:spent.map(Math.round)})}).catch(()=>{})};
+  const sub=id=>p.subjects.find(s=>s.id===id),att=()=>ans.filter(x=>x!==null).length;
+  function draw(){const q=qs[cur],sid=q.s;
+   box.innerHTML=`<div class="qhead"><span>${cur+1} ${t('q.of')} ${N}</span><span>${t('model.left')}: <span class="timer" id="left">${fmt(left())}</span></span></div>
+   <div class="tabs sec">${p.subjects.map(s=>{const ix=qs.map((x,i)=>x.s===s.id?i:-1).filter(i=>i>=0),d=ix.filter(i=>ans[i]!==null).length;return`<button class="tbtn ${s.id===sid?'on':''}" data-f="${ix[0]}">${esc(L(s))} (${d}/${ix.length})</button>`}).join('')}</div>
+   <h3 class="qtext">${esc(L(q.q))}</h3>${L(q.o).map((o,i)=>`<button class="opt ${ans[cur]===i?'sel':''}" data-k="${i}">${esc(o)}</button>`).join('')}
+   <div class="pal">${qs.map((x,i)=>x.s===sid?`<button data-i="${i}" class="${ans[i]!==null?'done':''} ${i===cur?'cur':''}">${i+1}</button>`:'').join('')}</div>
+   <div class="acts"><button class="btn ghost" id="pv" ${cur?'':'disabled'}>${t('back')}</button><button class="btn ghost" id="nx" ${cur<N-1?'':'disabled'}>${t('q.next')}</button><button class="btn ghost" id="cl">${t('model.clear')}</button><button class="btn" id="sb">${tt('Submit / Leave test','सबमिट / टेस्ट छोड़ें')}</button></div>`;
+   box.querySelectorAll('.opt').forEach(b=>b.onclick=()=>{ans[cur]=+b.dataset.k;save();draw()});
+   box.querySelectorAll('.pal button').forEach(b=>b.onclick=()=>{lap();cur=+b.dataset.i;draw()});
+   box.querySelectorAll('.sec button').forEach(b=>b.onclick=()=>{lap();cur=+b.dataset.f;draw()});
+   box.querySelector('#pv').onclick=()=>{lap();cur--;draw()};box.querySelector('#nx').onclick=()=>{lap();cur++;draw()};
+   box.querySelector('#cl').onclick=()=>{ans[cur]=null;save();draw()};
+   box.querySelector('#sb').onclick=()=>{const a=att();if(confirm(tt(`You attempted ${a} of ${N} questions. Unattempted questions will score 0. Submit the test and see your result?`,`आपने ${N} में से ${a} प्रश्न हल किए हैं। हल न किए प्रश्नों के 0 अंक मिलेंगे। क्या टेस्ट सबमिट करके रिज़ल्ट देखना चाहते हैं?`)))finish()};
+  }
+  async function finish(){if(over)return;over=true;lap();clearT();busy(tt('Checking your answers...','आपके उत्तर जाँचे जा रहे हैं...'));try{const r=await api('/model/submit',{method:'POST',body:JSON.stringify({id:p.id,answers:ans,spent:spent.map(Math.round)})});result(r,r.fresh)}catch(e){over=false;box.innerHTML=`<div class="notice">${esc(e.message)}</div><button class="btn" id="rt" type="button" style="margin-top:12px">${tt('Try again','फिर कोशिश करें')}</button>`;box.querySelector('#rt').onclick=finish}}
+  hook=()=>{if(lang==='hi'&&qs.some(x=>x.s!=='eng'&&x.s!=='hindi'&&!x.q.hi))api('/model/paper?id='+p.id+'&lang=hi').then(r=>{r.questions.forEach((x,i)=>{if(x.q.hi){qs[i].q=x.q;qs[i].o=x.o}});if(alive(k))draw()}).catch(()=>{});draw()};
+  timers.push(setInterval(()=>{const e=document.getElementById('left');if(e)e.textContent=fmt(left());if(left()<=0&&!over)finish()},1000));draw()}
+ function result(p,fresh){clearT();const r=p.result,qs=p.questions;
+  if(fresh)saveAtt(qs.map((q,i)=>p.answers[i]==null?null:{s:q.s,c:'',ok:p.answers[i]===q.a,sec:Math.round(p.spent[i]||0),src:'model'}).filter(Boolean));
+  let sid=p.subjects[0].id;
+  const card=(b,s)=>`<div class="card"><b>${b}</b><span>${s}</span></div>`;
+  const draw=()=>{box.innerHTML=`<button class="tbtn" id="bk" type="button">\u2190 ${t('pyq.back')}</button><h3 style="margin:14px 0 12px">${tt('Model Paper','मॉडल पेपर')} ${p.no} · ${tt('Result','रिज़ल्ट')}</h3>
+   <div class="kv">${card(fm(r.score)+' / '+fm(r.max),tt('Score','स्कोर'))}${card(fm(r.pct)+'%',tt('Percentage','प्रतिशत'))}${card(r.att+' / '+r.n,tt('Attempted','हल किए'))}${card(r.acc+'%',t('q.acc'))}</div>
+   <div class="kv">${card(r.ok,tt('Correct','सही'))}${card(r.bad,tt('Wrong','गलत'))}${card(r.skip,tt('Unattempted','बिना हल किए'))}${card(fmt(r.sec),tt('Time taken','लिया गया समय'))}</div>
+   <h3>${tt('Subject wise','विषय अनुसार')}</h3><div style="overflow-x:auto"><table class="pt"><tr><th>${tt('Subject','विषय')}</th><th>${tt('Attempted','हल किए')}</th><th>${tt('Correct','सही')}</th><th>${tt('Wrong','गलत')}</th><th>${tt('Skipped','छोड़े')}</th><th>${tt('Marks','अंक')}</th><th>${tt('Accuracy','सटीकता')}</th></tr>${r.subjects.map(s=>`<tr><td>${esc(L(s))}</td><td>${s.att} / ${s.n}</td><td>${s.ok}</td><td>${s.bad}</td><td>${s.skip}</td><td>${fm(s.marks)} / ${fm(s.max)}</td><td>${s.att?s.acc+'%':'0'}</td></tr>`).join('')}<tr class="tot"><td>${tt('Total','कुल')}</td><td>${r.att} / ${r.n}</td><td>${r.ok}</td><td>${r.bad}</td><td>${r.skip}</td><td>${fm(r.score)} / ${fm(r.max)}</td><td>${r.acc}%</td></tr></table></div>
+   <h3 style="margin-top:24px">${t('model.review')}</h3><div class="tabs">${p.subjects.map(s=>`<button class="tbtn ${s.id===sid?'on':''}" data-s="${s.id}">${esc(L(s))}</button>`).join('')}</div>
+   ${qs.map((q,i)=>q.s!==sid?'':qcard(i+1,q,p.answers[i],`<div class="hint">${p.answers[i]==null?tt('Not attempted: 0 marks','हल नहीं किया: 0 अंक'):p.answers[i]===q.a?'+'+fm(p.subjects.find(s=>s.id===q.s).m):'-'+fm(p.subjects.find(s=>s.id===q.s).neg)} ${tt('marks','अंक')}${q.t?' · '+esc(q.t):''}</div>`)).join('')}
+   <button class="btn" id="home" type="button">${tt('All model papers','सभी मॉडल पेपर')}</button>`;
+   bk(home);box.querySelector('#home').onclick=home;box.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{sid=b.dataset.s;draw()})};
+  hook=draw;draw()}
+ view.querySelector('#mya').onclick=async()=>{const k=++run;busy();try{const r=await api('/model/info?exam='+enc(me.exam));if(!alive(k))return;const done=r.papers.filter(x=>x.status==='done');
+   box.innerHTML=`<button class="tbtn" id="bk" type="button">\u2190 ${t('pyq.back')}</button><h3 style="margin:14px 0 6px">${tt('My attempted questions','मेरे हल किए प्रश्न')}</h3><p class="hint">${tt('Pick a model paper to see every question, your answer, the right answer and the explanation.','किसी मॉडल पेपर को चुनें और हर प्रश्न, अपना उत्तर, सही उत्तर और व्याख्या देखें।')}</p><div class="list">${done.length?done.map((x,i)=>`<button data-i="${i}"><b style="font-weight:500">${tt('Model Paper','मॉडल पेपर')} ${x.no}</b><span>${fm(x.score)} / ${fm(x.max)}</span></button>`).join(''):`<div class="notice">${tt('No submitted model papers yet.','अभी कोई सबमिट किया हुआ मॉडल पेपर नहीं है।')}</div>`}</div>`;
+   bk(home);box.querySelectorAll('.list button').forEach(b=>b.onclick=()=>open(done[+b.dataset.i].id))}catch(e){box.textContent=e.message}};
+ home();
 },
 
 chapters(){
@@ -218,37 +287,11 @@ analysis(){
  const weak=Object.entries(bc).map(([k,v])=>[k,v.ok/v.n,v.n]).sort((x,y)=>x[1]-y[1]).slice(0,5);
  const slow=a.slice().sort((x,y)=>y.sec-x.sec).slice(0,5);
  view.innerHTML=`${head('an.t')}<div class="kv"><div class="card"><b>${a.length}</b><span>${t('dash.attempted')}</span></div><div class="card"><b>${a.length?Math.round(ok/a.length*100):0}%</b><span>${t('q.acc')}</span></div><div class="card"><b>${fmt(avg)}</b><span>${t('q.avg')}</span></div><div class="card"><b>${ints.length}</b><span>${t('an.int')}</span></div></div>
- <div class="two" style="gap:32px"><div class="card"><h3>${t('an.by')}</h3><div class="bars">${Object.entries(bs).map(([k,v])=>{const p=Math.round(v.ok/v.n*100);return`<div><div class="lab"><span>${esc(L(subj(k)))}</span><span>${p}% (${v.ok}/${v.n})</span></div><div class="track"><div class="fill" style="width:${p}%"></div></div></div>`}).join('')}</div></div>
+ <div class="two" style="gap:32px"><div class="card"><h3>${t('an.by')}</h3><div class="bars">${Object.entries(bs).map(([k,v])=>{const p=Math.round(v.ok/v.n*100);return`<div><div class="lab"><span>${esc(L(subj(k))||k)}</span><span>${p}% (${v.ok}/${v.n})</span></div><div class="track"><div class="fill" style="width:${p}%"></div></div></div>`}).join('')}</div></div>
  <div class="card"><h3>${t('an.weak')}</h3><div class="bars">${weak.map(([k,r,n])=>`<div><div class="lab"><span>${esc(L(chap(k)))}</span><span>${Math.round(r*100)}% (${n})</span></div><div class="track"><div class="fill" style="width:${Math.round(r*100)}%"></div></div></div>`).join('')}</div>
  <h3 style="margin-top:20px">${t('an.slow')}</h3>${slow.map(x=>`<div class="lab" style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:6px"><span>${esc(L(chap(x.c)||subj(x.s)))}</span><span>${x.sec} ${t('sec')}</span></div>`).join('')}</div></div>
  <p class="hint" style="margin-top:20px">${t('an.ai')}</p>`;
 }};
-
-/* three hour model paper */
-function paper(el,source=shuffle(QUESTIONS)){withTr(el,source,()=>paperNow(el,source))}
-function paperNow(el,source){
- const qs=shuffle(source),ans=qs.map(()=>null),spent=qs.map(()=>0);let cur=0,mark=Date.now(),total=Math.max(60,qs.length*72),end=Date.now()+total*1000,over=false;
- const lap=()=>{spent[cur]+=(Date.now()-mark)/1000;mark=Date.now()};
- function draw(){const q=qs[cur];
-  el.innerHTML=`<div class="qhead"><span>${cur+1} ${t('q.of')} ${qs.length}</span><span>${t('model.left')}: <span class="timer" id="left">${fmt((end-Date.now())/1000)}</span></span></div>
-  <h3 class="qtext">${esc(L(q.q))}</h3>${L(q.o).map((o,k)=>`<button class="opt ${ans[cur]===k?'sel':''}" data-k="${k}">${esc(o)}</button>`).join('')}
-  <div class="pal">${qs.map((_,i)=>`<button data-i="${i}" class="${ans[i]!==null?'done':''} ${i===cur?'cur':''}">${i+1}</button>`).join('')}</div>
-  <div class="acts"><button class="btn ghost" id="pv" ${cur?'':'disabled'}>${t('back')}</button><button class="btn ghost" id="nx" ${cur<qs.length-1?'':'disabled'}>${t('q.next')}</button><button class="btn ghost" id="cl">${t('model.clear')}</button><button class="btn" id="sb">${t('model.submit')}</button></div>`;
-  el.querySelectorAll('.opt').forEach(b=>b.onclick=()=>{ans[cur]=+b.dataset.k;draw()});
-  el.querySelectorAll('.pal button').forEach(b=>b.onclick=()=>{lap();cur=+b.dataset.i;draw()});
-  el.querySelector('#pv').onclick=()=>{lap();cur--;draw()};el.querySelector('#nx').onclick=()=>{lap();cur++;draw()};
-  el.querySelector('#cl').onclick=()=>{ans[cur]=null;draw()};
-  el.querySelector('#sb').onclick=()=>{if(confirm(t('model.confirm')))finish()};
- }
- function finish(){lap();clearT();
-  const res=qs.map((q,i)=>({s:q.s,c:q.c,ok:ans[i]===q.a,sec:Math.round(spent[i]),src:'model'}));saveAtt(res);
-  const ok=res.filter(r=>r.ok).length;
-  el.innerHTML=`<div class="kv"><div class="card"><b>${ok} / ${qs.length}</b><span>${t('q.score')}</span></div><div class="card"><b>${fmt(total-Math.max(0,(end-Date.now())/1000))}</b><span>${t('model.left')}</span></div></div>
-  <h3>${t('model.review')}</h3>${qs.map((q,i)=>`<div class="fb ${ans[i]===q.a?'ok':'no'}"><b>${i+1}. ${esc(L(q.q))}</b>${ans[i]===null?t('model.skipped'):esc(L(q.o)[ans[i]])}${ans[i]===q.a?'':`<br>${t('q.wrong')} ${esc(L(q.o)[q.a])}<br><i>${t('q.exp')}:</i> ${esc(L(q.x))}`}</div>`).join('')}<button class="btn" id="ag">${t('model.gen')}</button>`;
-  el.querySelector('#ag').onclick=async()=>{el.textContent=t('model.busy');try{paper(el,await qapi('/questions?paper=1&n=50&seed='+Date.now()%1e9))}catch(e){el.textContent=e.message}};
- }
- hook=draw;timers.push(setInterval(()=>{const e=document.getElementById('left');if(e)e.textContent=fmt((end-Date.now())/1000);if(Date.now()>=end&&!over){over=true;finish()}},1000));draw();
-}
 
 /* interview rounds */
 function interviewRun(el,lg){

@@ -4,6 +4,8 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { MongoClient, ObjectId } = require('mongodb');
 const Q = require('./questions.js');
+const mctx = {};
+const Model = require('./model.js')(mctx);
 
 const ROOT = __dirname;
 const envFile = path.join(ROOT, '.env');
@@ -29,6 +31,7 @@ const mimeTypes={'.html':'text/html; charset=utf-8','.css':'text/css; charset=ut
 const send=(res,status,data,headers={})=>{res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store',...headers});res.end(JSON.stringify(data));};
 const readBody=req=>new Promise((resolve,reject)=>{let chunks=[],size=0;req.on('data',c=>{size+=c.length;if(size>12*1024*1024){reject(new Error('Request too large'));req.destroy();return;}chunks.push(c)});req.on('end',()=>{try{resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')||'{}'))}catch{reject(new Error('Invalid JSON'))}});req.on('error',reject)});
 const cookie=(token,age=60*60*24*14)=>`${cookieName}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax;${IS_PROD?' Secure;':''} Max-Age=${age}`;
+let modelCol,qlog;
 let client,db,users,attempts,chats,convs,documents,interviews,pyqCol,pyqJobs,pyqReports,trans;
 async function sessionUser(req){const value=(req.headers.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith(cookieName+'='));if(!value)return null;const data=jwtVerify(decodeURIComponent(value.slice(cookieName.length+1)));if(!data||!ObjectId.isValid(data.sub))return null;return users.findOne({_id:new ObjectId(data.sub)});}
 async function requireUser(req,res){const u=await sessionUser(req);if(!u)send(res,401,{error:'Please log in again.'});return u;}
@@ -166,7 +169,7 @@ const server=http.createServer(async(req,res)=>{
    if(url.pathname==='/api/logout'&&req.method==='POST')return send(res,200,{ok:true},{'Set-Cookie':cookie('',0)});
    if(url.pathname==='/api/me'&&req.method==='GET'){const u=await requireUser(req,res);if(u)return send(res,200,{user:safeUser(u)});return;}
    const user=await requireUser(req,res);if(!user)return;
-   if(url.pathname==='/api/account'&&req.method==='DELETE'){const filter={userId:user._id};await Promise.all([attempts.deleteMany(filter),chats.deleteMany(filter),convs.deleteMany(filter),documents.deleteMany(filter),interviews.deleteMany(filter)]);await users.deleteOne({_id:user._id});return send(res,200,{ok:true},{'Set-Cookie':cookie('',0)});}
+   if(url.pathname==='/api/account'&&req.method==='DELETE'){const filter={userId:user._id};await Promise.all([attempts.deleteMany(filter),modelCol.deleteMany(filter),qlog.deleteMany(filter),chats.deleteMany(filter),convs.deleteMany(filter),documents.deleteMany(filter),interviews.deleteMany(filter)]);await users.deleteOne({_id:user._id});return send(res,200,{ok:true},{'Set-Cookie':cookie('',0)});}
    if(url.pathname==='/api/profile'&&req.method==='PATCH'){
     const b=await readBody(req),set={};
     if(b.name!==undefined){const n=String(b.name).trim();if(n.length<2||n.length>60)return send(res,400,{error:'Enter a name of 2 to 60 characters.'});set.name=n;}
@@ -278,6 +281,7 @@ const server=http.createServer(async(req,res)=>{
     if(p.get('paper'))return send(res,200,{questions:Q.paper(Math.min(n,100),seed),source:'bank'});
     return send(res,200,{questions:Q.mix(n,seed),source:'bank'});
    }
+   if(url.pathname.startsWith('/api/model/')||url.pathname==='/api/qlog')return Model.handle(req,res,url,user);
    if(url.pathname==='/api/ai/paper'&&req.method==='POST'){let qs;try{const text=await gemini([{role:'user',parts:[{text:`Create exactly 10 multiple-choice questions for ${user.exam} exam practice. Use English. Return only valid JSON array, each item having q (string), o (array of exactly 4 strings), a (zero-based correct option index), x (short explanation). Avoid current affairs. Ensure answer index correct.`}]}],{responseMimeType:'application/json',maxOutputTokens:8000});qs=JSON.parse(text||'[]');if(!Array.isArray(qs)||qs.length<5)throw Error('Invalid paper');qs=qs.slice(0,20).map(q=>({q:String(q.q),o:q.o.map(String),a:Number(q.a),x:String(q.x),s:'ga',c:'polity'}))}catch(err){if(GEMINI_API_KEY)return send(res,502,{error:`Paper generation failed: ${err.message}`});qs=seededPaper().map(q=>({...q,s:'ga',c:'polity'}))}return send(res,200,{questions:qs,generated:Boolean(GEMINI_API_KEY)});}
    if(url.pathname==='/api/ai/interview'&&req.method==='POST'){const b=await readBody(req),answers=Array.isArray(b.answers)?b.answers.slice(0,12):[];if(!answers.length)return send(res,400,{error:'Complete at least one interview answer.'});if(!GEMINI_API_KEY)return send(res,200,{feedback:localFeedback(answers,b.language)});try{const feedback=await gemini([{role:'user',parts:[{text:`You are a supportive but honest interview coach for the ${user.exam} exam. Review these answers in ${b.language==='hi'?'Hindi':'English'}. Give specific feedback on clarity, relevance, structure, and one improvement for each answer. Do not invent facts. Keep it concise. Answers: ${JSON.stringify(answers)}`}]}],{maxOutputTokens:2500});return send(res,200,{feedback})}catch(err){return send(res,502,{error:`Interview feedback failed: ${err.message}`})}}
    return send(res,404,{error:'API route not found.'});
@@ -290,8 +294,9 @@ async function start(){
  if(!JWT_SECRET||JWT_SECRET.length<16){console.error('JWT_SECRET is required (at least 16 characters).');process.exitCode=1;return;}
  if(!MONGODB_URI){console.error('MongoDB is required. Add MONGODB_URI to your .env file.');process.exitCode=1;return;}
  client=new MongoClient(MONGODB_URI);await client.connect();db=client.db(DB_NAME);
- users=db.collection('users');attempts=db.collection('attempts');chats=db.collection('chats');convs=db.collection('convs');pyqCol=db.collection('pyq');pyqJobs=db.collection('pyqjobs');pyqReports=db.collection('pyqreports');trans=db.collection('translations');documents=db.collection('documents');interviews=db.collection('interviews');
- await Promise.all([users.createIndex({email:1},{unique:true}),attempts.createIndex({userId:1,_id:-1}),chats.createIndex({userId:1,_id:-1}),chats.createIndex({convId:1,_id:1}),convs.createIndex({userId:1,updatedAt:-1}),pyqCol.createIndex({exam:1,year:1,s:1}),documents.createIndex({userId:1,_id:-1}),interviews.createIndex({userId:1,_id:-1})]);
+ users=db.collection('users');attempts=db.collection('attempts');chats=db.collection('chats');convs=db.collection('convs');pyqCol=db.collection('pyq');pyqJobs=db.collection('pyqjobs');pyqReports=db.collection('pyqreports');trans=db.collection('translations');documents=db.collection('documents');interviews=db.collection('interviews');modelCol=db.collection('modelpapers');qlog=db.collection('qlog');
+ Object.assign(mctx,{gemini,translateItems,send,readBody,ObjectId,isAdmin,modelCol,qlog,pyqCol,hasKey:!!GEMINI_API_KEY});
+ await Promise.all([modelCol.createIndex({userId:1,exam:1,no:1}),qlog.createIndex({userId:1,exam:1,year:1}),users.createIndex({email:1},{unique:true}),attempts.createIndex({userId:1,_id:-1}),chats.createIndex({userId:1,_id:-1}),chats.createIndex({convId:1,_id:1}),convs.createIndex({userId:1,updatedAt:-1}),pyqCol.createIndex({exam:1,year:1,s:1}),documents.createIndex({userId:1,_id:-1}),interviews.createIndex({userId:1,_id:-1})]);
  if(ADMINS[0]&&ADMIN_PASSWORD.length>=8){const email=ADMINS[0],pw=ADMIN_PASSWORD,u=await users.findOne({email});
   if(!u){const salt=crypto.randomBytes(16).toString('hex');await users.insertOne({name:'Admin',gender:'other',category:'General',email,passHash:passwordHash(pw,salt),passSalt:salt,qualification:'grad',exam:'ssc-cgl',createdAt:new Date()});console.log('Admin account created for',email);}
   else if(passwordHash(pw,u.passSalt)!==u.passHash){const salt=crypto.randomBytes(16).toString('hex');await users.updateOne({_id:u._id},{$set:{passHash:passwordHash(pw,salt),passSalt:salt}});console.log('Admin password updated for',email);}}

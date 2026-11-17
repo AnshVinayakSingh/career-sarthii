@@ -70,3 +70,11 @@ Set `ADMIN_EMAIL` and `ADMIN_PASSWORD` (8+ characters) in Render. On every start
 
 When the site is in Hindi, questions that only exist in English are translated by Gemini (with retries on other models when busy) and cached in MongoDB (`translations`), so every later student gets them instantly. English language and Hindi language subject questions are never translated. Papers that exist only in Hindi are translated into English when they are imported.
 Translations are also prepared in advance: right after a paper is imported and when the server starts (question bank and every saved paper), so students rarely wait.
+
+## Model papers (exam pattern) and attempted questions
+
+- `model.js` holds the pattern of every exam in `PATTERNS` (subjects, questions per subject, marks, negative marking, duration). These are best-effort from the usual notification patterns, so check them against the latest official notification and edit the numbers if needed.
+- Model Paper 1, 2, 3... are generated per student by Gemini in the exam pattern, using that exam's saved PYQs as style samples. Questions already used in the student's earlier papers are excluded, so the same question never repeats (same type with new data is allowed). Hindi-subject papers are written in Hindi, English-subject in English, and the rest follow the site language.
+- Answers stay on the server until the student submits. Progress autosaves, the timer survives leaving the page, and leaving the test scores unattempted questions 0. Result shows score, subject wise marks and a full review.
+- Collections: `modelpapers`, `qlog` (PYQ attempts with question, answer and explanation). The "My attempted questions" button (top right) is in both PYQ and Model paper.
+- Needs `GEMINI_API_KEY`. Limit: 6 model papers per student per day.

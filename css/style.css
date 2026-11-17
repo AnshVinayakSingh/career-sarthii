@@ -212,3 +212,6 @@ table{max-width:100%;display:block;overflow-x:auto}
 .repbox{margin-top:26px;display:flex;flex-direction:column;align-items:flex-end;gap:8px}.repbox #rf{width:100%;max-width:420px;display:flex;flex-direction:column;gap:8px}.repbox textarea{width:100%;font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:inherit}
 .adm{margin-bottom:12px}.star{color:#e0a100;font-weight:600}.rpt{font-size:14px;margin-top:6px;padding:6px 10px;border-left:3px solid #e0a100;background:rgba(224,161,0,.08)}
 .rvw .rq{margin-top:12px;padding-top:10px;border-top:1px solid var(--line);font-size:14.5px}.rvw .rq div{padding:2px 0}.rvw .ok{color:#1a7f37;font-weight:500}
+.hdr{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}.hdr .tbtn{white-space:nowrap;margin-top:6px}
+.pt{width:100%;border-collapse:collapse;font-size:15px;margin:12px 0 4px}.pt th,.pt td{border:1px solid var(--line);padding:8px 10px;text-align:left}.pt th{background:var(--bg);color:var(--muted);font-weight:500}.pt .tot td{font-weight:600}
+.sec{margin-bottom:16px}
