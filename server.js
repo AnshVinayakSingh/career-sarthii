@@ -5,7 +5,7 @@ const crypto = require('node:crypto');
 const { MongoClient, ObjectId } = require('mongodb');
 const Q = require('./questions.js');
 const mctx = {};
-const Model = require('./model.js')(mctx);
+const Model = require('./model.js')(mctx); const Notices = require('./notices.js')(mctx);
 
 const ROOT = __dirname;
 const envFile = path.join(ROOT, '.env');
@@ -44,7 +44,7 @@ const CHAT_MODELS = dedupe([process.env.GEMINI_CHAT_MODEL || 'gemini-3.5-flash-l
 const LANG_RULE = { en: 'LANGUAGE RULE (strict): always reply in English only, even if the student writes in Hindi, Hinglish or any other language.', hi: 'LANGUAGE RULE (strict): always reply in Hindi written in Devanagari script, even if the student writes in English or Hinglish. Keep well known exam terms such as SSC, GDP, IPC in English.', hinglish: 'LANGUAGE RULE (strict): always reply in Hinglish, meaning Hindi written in Roman (English) letters with common English words mixed in naturally, like "Ye topic bahut important hai". Never use Devanagari script, even if the student writes in English or Hindi.' };
 const FIRST_TOKEN_MS = Number(process.env.GEMINI_FIRST_TOKEN_MS) || 8000;
 const RETRY = [404, 429, 500, 502, 503, 504];
-function gBody(model, contents, config = {}, system, think) { const generationConfig = { ...config }; delete generationConfig.temperature; if (/gemini-3/.test(model)) generationConfig.thinkingConfig = { thinkingLevel: think || thinkFor(model) }; const body = { contents, generationConfig }; if (system) body.systemInstruction = { parts: [{ text: system }] }; return JSON.stringify(body); }
+function gBody(model, contents, config = {}, system, think, tools) { const generationConfig = { ...config }; delete generationConfig.temperature; if (/gemini-3/.test(model)) generationConfig.thinkingConfig = { thinkingLevel: think || thinkFor(model) }; const body = { contents, generationConfig }; if (tools) body.tools = tools; if (system) body.systemInstruction = { parts: [{ text: system }] }; return JSON.stringify(body); }
 const GBASE = process.env.GEMINI_BASE || 'https://generativelanguage.googleapis.com';
 const gUrl = (model, stream) => `${GBASE}/v1beta/models/${encodeURIComponent(model)}:${stream ? 'streamGenerateContent?alt=sse' : 'generateContent'}`;
 const gHeaders = { 'content-type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY };
@@ -52,7 +52,7 @@ const gText = p => (p.candidates?.[0]?.content?.parts || []).filter(x => !x.thou
 async function gemini(contents, config = {}, system, opts = {}) {
   if (!GEMINI_API_KEY) return null; let lastErr;
   for (const model of (opts.models || MODELS)) {
-    const response = await fetch(gUrl(model, false), { method: 'POST', headers: gHeaders, body: gBody(model, contents, config, system, opts.think), signal: AbortSignal.timeout(opts.timeout || 35000) }).catch(e => ({ ok: false, status: 0, json: async () => ({ error: { message: e.message } }) }));
+    const response = await fetch(gUrl(model, false), { method: 'POST', headers: gHeaders, body: gBody(model, contents, config, system, opts.think, opts.tools), signal: AbortSignal.timeout(opts.timeout || 35000) }).catch(e => ({ ok: false, status: 0, json: async () => ({ error: { message: e.message } }) }));
     const payload = await response.json().catch(() => ({}));
     if (response.ok) { const t = gText(payload).trim(); if (t) return t; lastErr = new Error('Empty answer'); continue; }
     lastErr = new Error(payload.error?.message || `Gemini returned ${response.status}`);
@@ -281,7 +281,8 @@ const server=http.createServer(async(req,res)=>{
     if(p.get('paper'))return send(res,200,{questions:Q.paper(Math.min(n,100),seed),source:'bank'});
     return send(res,200,{questions:Q.mix(n,seed),source:'bank'});
    }
-   if(url.pathname.startsWith('/api/model/')||url.pathname.startsWith('/api/chap/')||url.pathname==='/api/qlog')return Model.handle(req,res,url,user);
+   if(url.pathname==='/api/notices'&&req.method==='GET')return Notices.handle(req,res,url,user);
+    if(url.pathname.startsWith('/api/model/')||url.pathname.startsWith('/api/chap/')||url.pathname==='/api/qlog')return Model.handle(req,res,url,user);
    if(url.pathname==='/api/ai/paper'&&req.method==='POST'){let qs;try{const text=await gemini([{role:'user',parts:[{text:`Create exactly 10 multiple-choice questions for ${user.exam} exam practice. Use English. Return only valid JSON array, each item having q (string), o (array of exactly 4 strings), a (zero-based correct option index), x (short explanation). Avoid current affairs. Ensure answer index correct.`}]}],{responseMimeType:'application/json',maxOutputTokens:8000});qs=JSON.parse(text||'[]');if(!Array.isArray(qs)||qs.length<5)throw Error('Invalid paper');qs=qs.slice(0,20).map(q=>({q:String(q.q),o:q.o.map(String),a:Number(q.a),x:String(q.x),s:'ga',c:'polity'}))}catch(err){if(GEMINI_API_KEY)return send(res,502,{error:`Paper generation failed: ${err.message}`});qs=seededPaper().map(q=>({...q,s:'ga',c:'polity'}))}return send(res,200,{questions:qs,generated:Boolean(GEMINI_API_KEY)});}
    if(url.pathname==='/api/ai/interview'&&req.method==='POST'){const b=await readBody(req),answers=Array.isArray(b.answers)?b.answers.slice(0,12):[];if(!answers.length)return send(res,400,{error:'Complete at least one interview answer.'});if(!GEMINI_API_KEY)return send(res,200,{feedback:localFeedback(answers,b.language)});try{const feedback=await gemini([{role:'user',parts:[{text:`You are a supportive but honest interview coach for the ${user.exam} exam. Review these answers in ${b.language==='hi'?'Hindi':'English'}. Give specific feedback on clarity, relevance, structure, and one improvement for each answer. Do not invent facts. Keep it concise. Answers: ${JSON.stringify(answers)}`}]}],{maxOutputTokens:2500});return send(res,200,{feedback})}catch(err){return send(res,502,{error:`Interview feedback failed: ${err.message}`})}}
    return send(res,404,{error:'API route not found.'});
@@ -294,7 +295,7 @@ async function start(){
  if(!JWT_SECRET||JWT_SECRET.length<16){console.error('JWT_SECRET is required (at least 16 characters).');process.exitCode=1;return;}
  if(!MONGODB_URI){console.error('MongoDB is required. Add MONGODB_URI to your .env file.');process.exitCode=1;return;}
  client=new MongoClient(MONGODB_URI);await client.connect();db=client.db(DB_NAME);
- users=db.collection('users');attempts=db.collection('attempts');chats=db.collection('chats');convs=db.collection('convs');pyqCol=db.collection('pyq');pyqJobs=db.collection('pyqjobs');pyqReports=db.collection('pyqreports');trans=db.collection('translations');documents=db.collection('documents');interviews=db.collection('interviews');modelCol=db.collection('modelpapers');qlog=db.collection('qlog');chapCol=db.collection('chaplist');chq=db.collection('chq');
+ users=db.collection('users');attempts=db.collection('attempts');chats=db.collection('chats');convs=db.collection('convs');pyqCol=db.collection('pyq');pyqJobs=db.collection('pyqjobs');pyqReports=db.collection('pyqreports');trans=db.collection('translations');documents=db.collection('documents');interviews=db.collection('interviews');modelCol=db.collection('modelpapers');qlog=db.collection('qlog');chapCol=db.collection('chaplist');chq=db.collection('chq');mctx.ncol=db.collection('notices');
  Object.assign(mctx,{fastModels:CHAT_MODELS,gemini,translateItems,send,readBody,ObjectId,isAdmin,modelCol,qlog,chapCol,chq,pyqCol,hasKey:!!GEMINI_API_KEY});
  await Promise.all([modelCol.createIndex({userId:1,exam:1,no:1}),qlog.createIndex({userId:1,exam:1,year:1}),chq.createIndex({userId:1,exam:1,s:1}),users.createIndex({email:1},{unique:true}),attempts.createIndex({userId:1,_id:-1}),chats.createIndex({userId:1,_id:-1}),chats.createIndex({convId:1,_id:1}),convs.createIndex({userId:1,updatedAt:-1}),pyqCol.createIndex({exam:1,year:1,s:1}),documents.createIndex({userId:1,_id:-1}),interviews.createIndex({userId:1,_id:-1})]);
  if(ADMINS[0]&&ADMIN_PASSWORD.length>=8){const email=ADMINS[0],pw=ADMIN_PASSWORD,u=await users.findOne({email});

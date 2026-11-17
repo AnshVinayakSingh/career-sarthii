@@ -300,10 +300,26 @@ interview(){
 },
 
 notices(){
- const key='cs_notif_'+em,p=store.get(key,{notif:true,form:true,result:true}),e=exam();
- view.innerHTML=`${head('notice.t','notice.d')}<h3>${esc(e.n)}</h3><p><a class="btn" href="${e.u}" target="_blank" rel="noopener noreferrer">${t('notice.official')}</a></p>
- <div class="card" style="max-width:420px"><b>${t('notice.prefs')}</b><div style="margin-top:10px;display:grid;gap:8px">${[['notif','n.notif'],['form','n.form'],['result','n.result']].map(([k,l])=>`<label class="check"><input type="checkbox" data-k="${k}" ${p[k]?'checked':''}><span>${t(l)}</span></label>`).join('')}</div></div><p class="hint" style="margin-top:14px">${t('notice.note')}</p>`;
- view.querySelectorAll('input[data-k]').forEach(i=>i.onchange=()=>{p[i.dataset.k]=i.checked;store.set(key,p)});
+ const CATS=[['all','All','सभी'],['form','Apply / Forms','फॉर्म / आवेदन'],['result','Results','रिज़ल्ट'],['admit','Admit Card','एडमिट कार्ड'],['city','City / Centre','सिटी / सेंटर'],['exam','Exam Dates','परीक्षा तिथि'],['postponed','Postponed','स्थगित / बदलाव'],['answerkey','Answer Key','आंसर की'],['other','Other','अन्य']];
+ const PORTALS=[['SSC','https://ssc.gov.in'],['UPSC','https://upsc.gov.in'],['Railway RRB','https://indianrailways.gov.in'],['IBPS','https://www.ibps.in'],['SBI Careers','https://sbi.co.in/web/careers'],['RBI','https://opportunities.rbi.org.in'],['NTA','https://nta.ac.in'],['UPPSC','https://uppsc.up.nic.in'],['UPSSSC','https://upsssc.gov.in'],['UP Police (UPPRPB)','https://uppbpb.gov.in'],['Join Indian Army','https://joinindianarmy.nic.in'],['India Post','https://indiapost.gov.in'],['National Career Service','https://www.ncs.gov.in'],['Employment News','https://www.employmentnews.gov.in']];
+ view.innerHTML=`<div class="hdr"><div><h2>${tt('Government Exam Notifications','सरकारी परीक्षा नोटिफिकेशन')}</h2><p style="color:var(--muted)">${tt('Forms, results, admit cards, city allotment, exam dates, postponements and answer keys of all government exams, with live links.','सभी सरकारी परीक्षाओं के फॉर्म, रिज़ल्ट, एडमिट कार्ड, सिटी अलॉटमेंट, परीक्षा तिथि, स्थगन और आंसर की, लाइव लिंक के साथ।')}</p></div><button class="tbtn" id="nrf" type="button">${tt('Refresh','रिफ्रेश')}</button></div>
+ <input id="nq" class="nq" type="search" placeholder="${tt('Search exam, board or keyword (SSC, UPSC, Railway...)','परीक्षा, बोर्ड या कीवर्ड खोजें (SSC, UPSC, Railway...)')}"><div class="chips" id="nch"></div><div id="nmeta" class="hint"></div><div id="nl" style="margin-top:10px"></div>
+ <details class="card" style="margin-top:22px"><summary><b>${tt('Official portals','आधिकारिक वेबसाइट')}</b></summary><div class="npt">${PORTALS.map(([n,u])=>`<a href="${u}" target="_blank" rel="noopener noreferrer">${esc(n)} \u2197</a>`).join('')}</div></details>`;
+ const nl=view.querySelector('#nl'),nch=view.querySelector('#nch'),nq=view.querySelector('#nq'),meta=view.querySelector('#nmeta');let items=[],cat='all';
+ const dt=d=>{if(!d)return'';const x=new Date(d+'T00:00:00');return isNaN(x)?'':x.toLocaleDateString(lang==='hi'?'hi-IN':'en-IN',{day:'numeric',month:'short',year:'numeric'})};
+ const ago=ms=>{const m=Math.round((Date.now()-ms)/60000);return m<2?tt('just now','अभी'):m<60?m+tt(' min ago',' मिनट पहले'):Math.round(m/60)<48?Math.round(m/60)+tt(' hours ago',' घंटे पहले'):Math.round(m/1440)+tt(' days ago',' दिन पहले')};
+ const draw=()=>{const q=nq.value.trim().toLowerCase(),cnt={};items.forEach(x=>{cnt[x.cat]=(cnt[x.cat]||0)+1});
+  nch.innerHTML=CATS.filter(c=>c[0]==='all'||cnt[c[0]]).map(c=>`<button type="button" data-c="${c[0]}" class="${c[0]===cat?'on':''}">${tt(c[1],c[2])} ${c[0]==='all'?items.length:cnt[c[0]]}</button>`).join('');
+  nch.querySelectorAll('button').forEach(b=>b.onclick=()=>{cat=b.dataset.c;draw()});
+  const list=items.filter(x=>(cat==='all'||x.cat===cat)&&(!q||(x.title+' '+(x.hi||'')+' '+x.org+' '+x.sum).toLowerCase().includes(q)));
+  nl.innerHTML=list.length?list.map(x=>{const c=CATS.find(k=>k[0]===x.cat)||CATS[8],today=new Date().toISOString().slice(0,10),late=x.lastDate&&x.lastDate<today;
+   return`<div class="nc"><div class="nct"><span class="nb nb-${x.cat}">${tt(c[1],c[2])}</span>${x.org?`<span class="hint">${esc(x.org)}</span>`:''}<span class="hint" style="margin-left:auto">${dt(x.date)}</span></div><b class="nti">${esc(lang==='hi'&&x.hi?x.hi:x.title)}</b>${(lang==='hi'&&x.sumHi?x.sumHi:x.sum)?`<div class="nsu">${esc(lang==='hi'&&x.sumHi?x.sumHi:x.sum)}</div>`:''}
+   ${x.lastDate?`<div class="hint" style="margin-top:6px">${tt('Last date','अंतिम तिथि')}: <b style="${late?'':'color:var(--accent)'}">${dt(x.lastDate)}</b>${late?' ('+tt('closed','समाप्त')+')':''}</div>`:''}
+   <div class="nac"><a class="btn sm" href="${esc(x.link)}" target="_blank" rel="noopener noreferrer">${tt('Open notice','नोटिस खोलें')} \u2197</a>${x.apply?`<a class="btn ghost sm" href="${esc(x.apply)}" target="_blank" rel="noopener noreferrer">${tt('Apply link','आवेदन लिंक')} \u2197</a>`:''}${x.official?'':`<span class="hint">${tt('Verify on the official site','आधिकारिक साइट पर जाँच लें')}</span>`}</div></div>`}).join(''):`<div class="notice">${tt('Nothing found for this filter.','इस फ़िल्टर में कुछ नहीं मिला।')}</div>`};
+ let busy=false;const load=async force=>{if(busy)return;busy=true;nl.innerHTML=`<div class="notice">${tt('Collecting the latest notices from official sources... first load can take up to a minute.','आधिकारिक स्रोतों से ताज़ा नोटिस जुटाए जा रहे हैं... पहली बार में 1 मिनट तक लग सकता है।')}</div>`;
+  try{const r=await api('/notices'+(force?'?refresh=1':''));if(!document.body.contains(nl))return;items=r.items||[];meta.textContent=r.noKey?tt('Live notices need the Gemini key on the server.','लाइव नोटिस के लिए सर्वर पर Gemini key चाहिए।'):r.at?tt('Updated ','अपडेट: ')+ago(r.at)+(r.refreshing?' · '+tt('refreshing...','रिफ्रेश हो रहा है...'):''):'';draw()}
+  catch(e){if(document.body.contains(nl))nl.innerHTML=`<div class="notice">${esc(e.message)}</div>`}finally{busy=false}};
+ nq.oninput=draw;view.querySelector('#nrf').onclick=()=>load(true);load(false);
 },
 
 documents(){
